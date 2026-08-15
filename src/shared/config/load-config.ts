@@ -10,7 +10,13 @@ export interface AppConfig {
   readonly service: { readonly name: string; readonly version: string };
   readonly http: { readonly port: number };
   readonly log: { readonly level: LogLevelName };
-  readonly database: { readonly url: string };
+  readonly database: {
+    readonly url: string;
+    readonly poolMin: number;
+    readonly poolMax: number;
+    readonly connectionTimeoutMs: number;
+    readonly idleTimeoutMs: number;
+  };
   readonly redis: { readonly url: string };
   readonly security: { readonly encryptionKey: string; readonly apiKey?: string };
 }
@@ -55,7 +61,13 @@ function toAppConfig(env: EnvShape): AppConfig {
     service: { name: env.SERVICE_NAME, version: env.SERVICE_VERSION },
     http: { port: env.PORT },
     log: { level: env.LOG_LEVEL },
-    database: { url: env.DATABASE_URL },
+    database: {
+      url: env.DATABASE_URL,
+      poolMin: env.DB_POOL_MIN,
+      poolMax: env.DB_POOL_MAX,
+      connectionTimeoutMs: env.DB_CONNECTION_TIMEOUT_MS,
+      idleTimeoutMs: env.DB_IDLE_TIMEOUT_MS,
+    },
     redis: { url: env.REDIS_URL },
     security: {
       encryptionKey: env.ENCRYPTION_KEY,

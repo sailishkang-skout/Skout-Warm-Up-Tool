@@ -2,19 +2,28 @@ import { describe, expect, it } from "vitest";
 import { buildApp } from "../../src/app.js";
 import { loadConfig } from "../../src/shared/config/index.js";
 import { ValidationError } from "../../src/shared/errors/index.js";
+import { createLogger } from "../../src/shared/logger/index.js";
+import { createFakeDatabase } from "../support/fake-database.js";
 
 const testConfig = { ...loadConfig({ NODE_ENV: "test" }), log: { level: "silent" as const } };
+const testLogger = createLogger({
+  level: testConfig.log.level,
+  serviceName: testConfig.service.name,
+  env: testConfig.env,
+});
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Builds the real app (proving actual plugin wiring works end to end) and
- * adds two throwaway routes solely to exercise the error handler's branches.
- * These are test scaffolding registered here, not business routes added to
- * `src/app.ts` — Stage 2 does not add real API routes yet.
+ * Builds the real app (proving actual plugin wiring works end to end) with a
+ * fake `Database` — this suite tests HTTP routing/error-handling, not SQL
+ * behavior, so a real Postgres connection would only add cost with no extra
+ * confidence (real SQL behavior is covered separately in tests/db/). Also
+ * adds two throwaway routes solely to exercise the error handler's branches;
+ * these are test scaffolding, not business routes added to `src/app.ts`.
  */
-async function buildTestApp() {
-  const app = await buildApp(testConfig);
+async function buildTestApp(databaseConnected = true) {
+  const app = await buildApp(testConfig, testLogger, createFakeDatabase({ connected: databaseConnected }));
 
   app.get("/__test/throws-app-error", async () => {
     throw new ValidationError("bad payload", { fieldErrors: { name: ["is required"] } });
@@ -60,6 +69,26 @@ describe("GET /health", () => {
 
     expect(response.headers["x-request-id"]).toBe("client-request-id");
     expect(response.headers["x-correlation-id"]).toBe("client-correlation-id");
+    await app.close();
+  });
+});
+
+describe("GET /readiness", () => {
+  it("returns 200 ready when the database is reachable", async () => {
+    const app = await buildTestApp(true);
+    const response = await app.inject({ method: "GET", url: "/readiness" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ status: "ready", checks: { database: "ok" } });
+    await app.close();
+  });
+
+  it("returns 503 not_ready when the database is unreachable", async () => {
+    const app = await buildTestApp(false);
+    const response = await app.inject({ method: "GET", url: "/readiness" });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ status: "not_ready", checks: { database: "unavailable" } });
     await app.close();
   });
 });
