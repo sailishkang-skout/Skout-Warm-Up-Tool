@@ -9,6 +9,7 @@ export type Branded<Value, Tag extends string> = Value & { readonly [brand]: Tag
 
 export type TenantId = Branded<string, "TenantId">;
 export type UserId = Branded<string, "UserId">;
+export type ApiCredentialId = Branded<string, "ApiCredentialId">;
 export type MailboxId = Branded<string, "MailboxId">;
 export type ProviderAccountId = Branded<string, "ProviderAccountId">;
 export type WarmupProfileId = Branded<string, "WarmupProfileId">;
@@ -29,6 +30,7 @@ function brander<Tag extends string>(): (value: string) => Branded<string, Tag> 
 
 export const asTenantId = brander<"TenantId">();
 export const asUserId = brander<"UserId">();
+export const asApiCredentialId = brander<"ApiCredentialId">();
 export const asMailboxId = brander<"MailboxId">();
 export const asProviderAccountId = brander<"ProviderAccountId">();
 export const asWarmupProfileId = brander<"WarmupProfileId">();

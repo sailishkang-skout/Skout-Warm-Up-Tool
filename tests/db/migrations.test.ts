@@ -13,6 +13,14 @@ import { createTestDatabaseHandle, ensureTestDatabaseExists, resetSchema, type T
 
 const logger = createLogger({ level: "silent", serviceName: "skout-email-warmup-service-tests", env: "test" });
 
+const ALL_MIGRATION_FILENAMES = [
+  "001_create_tenants.sql",
+  "002_create_mailboxes.sql",
+  "003_create_provider_accounts.sql",
+  "004_create_api_credentials.sql",
+  "005_create_audit_events.sql",
+];
+
 let handle: TestDatabaseHandle;
 
 beforeAll(async () => {
@@ -37,17 +45,15 @@ describe("runMigrations", () => {
   it("applies all migrations from an empty schema and creates the expected tables", async () => {
     const result = await runMigrations(handle.pool, logger);
 
-    expect(result.applied).toEqual([
-      "001_create_tenants.sql",
-      "002_create_mailboxes.sql",
-      "003_create_provider_accounts.sql",
-    ]);
+    expect(result.applied).toEqual(ALL_MIGRATION_FILENAMES);
     expect(result.alreadyApplied).toEqual([]);
 
     // No error on SELECT from each table means it exists with the expected name.
     await expect(handle.database.query("SELECT * FROM tenants LIMIT 0")).resolves.toEqual([]);
     await expect(handle.database.query("SELECT * FROM mailboxes LIMIT 0")).resolves.toEqual([]);
     await expect(handle.database.query("SELECT * FROM provider_accounts LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM api_credentials LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM audit_events LIMIT 0")).resolves.toEqual([]);
   });
 
   it("is idempotent — running it again applies nothing further", async () => {
@@ -55,11 +61,7 @@ describe("runMigrations", () => {
     const second = await runMigrations(handle.pool, logger);
 
     expect(second.applied).toEqual([]);
-    expect(second.alreadyApplied).toEqual([
-      "001_create_tenants.sql",
-      "002_create_mailboxes.sql",
-      "003_create_provider_accounts.sql",
-    ]);
+    expect(second.alreadyApplied).toEqual(ALL_MIGRATION_FILENAMES);
   });
 
   it("detects a checksum change on an already-applied migration and refuses to proceed", async () => {
@@ -76,7 +78,7 @@ describe("getMigrationStatus", () => {
   it("reports every migration as pending against an empty schema", async () => {
     const status = await getMigrationStatus(handle.pool);
     expect(status.every((entry) => !entry.applied)).toBe(true);
-    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3]);
+    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3, 4, 5]);
   });
 
   it("reports applied migrations with an appliedAt timestamp after running them", async () => {

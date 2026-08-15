@@ -18,7 +18,7 @@ export interface AppConfig {
     readonly idleTimeoutMs: number;
   };
   readonly redis: { readonly url: string };
-  readonly security: { readonly encryptionKey: string; readonly apiKey?: string };
+  readonly security: { readonly encryptionKey: string; readonly apiKeyPepper: string };
 }
 
 /**
@@ -71,7 +71,7 @@ function toAppConfig(env: EnvShape): AppConfig {
     redis: { url: env.REDIS_URL },
     security: {
       encryptionKey: env.ENCRYPTION_KEY,
-      ...(env.API_KEY ? { apiKey: env.API_KEY } : {}),
+      apiKeyPepper: env.API_KEY_PEPPER,
     },
   };
 }

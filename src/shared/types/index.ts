@@ -1,4 +1,5 @@
 export type {
+  ApiCredentialId,
   AuditEventId,
   Branded,
   ConversationId,
@@ -18,6 +19,7 @@ export type {
 } from "./ids.js";
 
 export {
+  asApiCredentialId,
   asAuditEventId,
   asConversationId,
   asCorrelationId,

@@ -18,6 +18,7 @@ const validProductionEnv = {
   DATABASE_URL: "postgresql://user:pass@db.internal:5432/warmup",
   REDIS_URL: "redis://redis.internal:6379",
   ENCRYPTION_KEY: "a".repeat(32),
+  API_KEY_PEPPER: "b".repeat(32),
 };
 
 describe("loadConfig", () => {
@@ -30,7 +31,7 @@ describe("loadConfig", () => {
     expect(config.database.url).toBe(validProductionEnv.DATABASE_URL);
     expect(config.redis.url).toBe(validProductionEnv.REDIS_URL);
     expect(config.security.encryptionKey).toBe(validProductionEnv.ENCRYPTION_KEY);
-    expect(config.security.apiKey).toBeUndefined();
+    expect(config.security.apiKeyPepper).toBe(validProductionEnv.API_KEY_PEPPER);
   });
 
   it("defaults NODE_ENV, PORT, and LOG_LEVEL when unset", () => {
@@ -46,18 +47,19 @@ describe("loadConfig", () => {
     expect(loadConfig(validProductionEnv).isProduction).toBe(true);
   });
 
-  it("applies development defaults for DATABASE_URL/REDIS_URL/ENCRYPTION_KEY when unset", () => {
+  it("applies development defaults for DATABASE_URL/REDIS_URL/ENCRYPTION_KEY/API_KEY_PEPPER when unset", () => {
     const config = loadConfig({ NODE_ENV: "development" });
     expect(config.database.url).toContain("localhost");
     expect(config.redis.url).toContain("localhost");
     expect(config.security.encryptionKey.length).toBeGreaterThanOrEqual(32);
+    expect(config.security.apiKeyPepper.length).toBeGreaterThanOrEqual(32);
   });
 
   it("treats an empty string the same as unset, matching this repo's .env.example convention", () => {
-    // The real .env ships ENCRYPTION_KEY= and API_KEY= blank, not omitted.
-    const config = loadConfig({ NODE_ENV: "development", API_KEY: "", ENCRYPTION_KEY: "" });
-    expect(config.security.apiKey).toBeUndefined();
+    // The real .env ships ENCRYPTION_KEY= and API_KEY_PEPPER= blank, not omitted.
+    const config = loadConfig({ NODE_ENV: "development", ENCRYPTION_KEY: "", API_KEY_PEPPER: "" });
     expect(config.security.encryptionKey).toBeTruthy();
+    expect(config.security.apiKeyPepper).toBeTruthy();
   });
 
   it("does not apply development defaults in production", () => {
@@ -67,6 +69,7 @@ describe("loadConfig", () => {
     expect(message).toContain("DATABASE_URL");
     expect(message).toContain("REDIS_URL");
     expect(message).toContain("ENCRYPTION_KEY");
+    expect(message).toContain("API_KEY_PEPPER");
   });
 
   it("rejects an ENCRYPTION_KEY shorter than 32 characters", () => {
@@ -83,8 +86,10 @@ describe("loadConfig", () => {
     expect(error).toBeInstanceOf(ConfigurationError);
   });
 
-  it("rejects an API_KEY shorter than 16 characters when one is supplied", () => {
-    const error = captureError(() => loadConfig({ ...validProductionEnv, API_KEY: "short" }));
+  it("rejects an API_KEY_PEPPER shorter than 32 characters", () => {
+    const error = captureError(() =>
+      loadConfig({ ...validProductionEnv, API_KEY_PEPPER: "too-short" }),
+    );
     expect(error).toBeInstanceOf(ConfigurationError);
   });
 

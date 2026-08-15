@@ -14,4 +14,5 @@ export const DEVELOPMENT_ENV_DEFAULTS: Partial<Record<keyof EnvShape, string>> =
   DATABASE_URL: "postgresql://postgres:postgres@localhost:5433/skout_warmup",
   REDIS_URL: "redis://localhost:6380",
   ENCRYPTION_KEY: "dev-only-insecure-encryption-key-do-not-use-in-prod",
+  API_KEY_PEPPER: "dev-only-insecure-api-key-pepper-do-not-use-in-prod",
 };

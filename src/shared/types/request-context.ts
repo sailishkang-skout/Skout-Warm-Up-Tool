@@ -1,14 +1,15 @@
-import type { CorrelationId, RequestId, TenantId } from "./ids.js";
+import type { ApiCredentialId, CorrelationId, RequestId, TenantId } from "./ids.js";
 
 /**
- * `actor` is intentionally minimal — real authentication lands in Stage 4.
- * This shape only exists so request-scoped code has somewhere to read
- * tenant/actor identity from once auth populates it.
+ * A discriminated union so future actor kinds (a worker acting on a job, a
+ * future end-user session) can be added as new variants without disturbing
+ * this one — deliberately not speculatively included now, since nothing
+ * produces them yet (see the "no fake auth" note this replaced in Stage 2).
  */
-export interface RequestActor {
-  readonly kind: "api-key" | "system";
-  readonly id: string;
-}
+export type RequestActor = {
+  readonly type: "api_key";
+  readonly credentialId: ApiCredentialId;
+};
 
 export interface RequestContext {
   readonly requestId: RequestId;

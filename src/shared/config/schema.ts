@@ -32,8 +32,9 @@ export const envSchema = z
     DB_CONNECTION_TIMEOUT_MS: z.coerce.number().int().min(0).default(5000),
     DB_IDLE_TIMEOUT_MS: z.coerce.number().int().min(0).default(30000),
     ENCRYPTION_KEY: z.string().min(32, "ENCRYPTION_KEY must be at least 32 characters"),
-    // Reserved for Stage 4 bootstrap/admin auth wiring — no auth logic consumes this yet.
-    API_KEY: z.string().min(16, "API_KEY must be at least 16 characters").optional(),
+    // HMAC pepper for API credential hashing — see src/modules/auth/domain/api-key-hash.ts
+    // for why HMAC-SHA256 rather than a password KDF, and why a pepper at all.
+    API_KEY_PEPPER: z.string().min(32, "API_KEY_PEPPER must be at least 32 characters"),
   })
   .check((ctx) => {
     if (ctx.value.DB_POOL_MIN > ctx.value.DB_POOL_MAX) {

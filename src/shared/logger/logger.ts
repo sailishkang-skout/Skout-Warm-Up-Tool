@@ -34,6 +34,7 @@ const REDACT_PATHS = [
   "*.password",
   "*.apiKey",
   "*.api_key",
+  "*.apiKeyPepper",
   "*.accessToken",
   "*.access_token",
   "*.refreshToken",
@@ -43,6 +44,8 @@ const REDACT_PATHS = [
   "*.smtpPassword",
   "*.authorization",
   "*.credentials",
+  "*.secret",
+  "*.rawKey",
 ];
 
 /**

@@ -11,6 +11,9 @@ the table directly.
   (decisions belong to `policy`) — audit is for accountability/forensics, not
   runtime branching.
 
-**Target stage**: introduced as a shared capability from Stage 6 onward
-(wherever the first state transition needs to be recorded), hardened in
-Stage 14.
+**Target stage**: introduced in Stage 4 (authentication needed a real audit
+trail — API key issuance/rotation/revocation, authentication success/failure
+— sooner than the original "Stage 6 onward" estimate), hardened further in
+Stage 14. Recording is currently fail-open: a failure to persist an audit row
+logs an error but never blocks the request it describes — durability
+guarantees are part of that later hardening, not this foundation.

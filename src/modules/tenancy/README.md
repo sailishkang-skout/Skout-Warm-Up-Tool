@@ -12,4 +12,5 @@ is it active."
   authenticated API key), never accepted from a request body/param here or
   anywhere downstream.
 
-**Target stage**: Stage 4 (Tenant and API authentication foundation).
+**Target stage**: persistence implemented in Stage 3; the `auth`-resolves-identity
+boundary above became real in Stage 4 (Tenant and API authentication foundation).
