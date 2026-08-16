@@ -15,6 +15,17 @@ export const PROVIDER_SEND_STATUSES = [
   "AUTH_FAILED",
   "TEMPORARY_FAILURE",
   "PERMANENT_FAILURE",
+  /**
+   * The provider's actual receipt of the send request could not be
+   * confirmed (a network failure or timeout after the request may have
+   * already left this process) — Stage 9 spec section 7. Deliberately
+   * excluded from `retry-policy.ts`'s retryable set: neither Gmail nor
+   * Microsoft Graph expose a client-supplied idempotency token, so a retry
+   * here could send a genuine duplicate. See docs/ARCHITECTURE.md's
+   * idempotency section for the full limitation and what this status
+   * requires (manual reconciliation, never an automatic retry).
+   */
+  "SEND_UNKNOWN",
 ] as const;
 export type ProviderSendStatus = (typeof PROVIDER_SEND_STATUSES)[number];
 

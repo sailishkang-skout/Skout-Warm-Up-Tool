@@ -9,6 +9,7 @@ import type { ProviderConnectionValidationResult } from "../../domain/provider-c
 import type { ProviderCredential } from "../../domain/provider-credential.js";
 import type { ProviderHealthResult } from "../../domain/provider-health.js";
 import type { OAuthAuthorizationRequest, OAuthCodeExchangeRequest, OAuthOperations, OAuthTokenSet } from "../../domain/oauth-operations.js";
+import type { ProviderSendOutcome, SendMessageCommand } from "../../domain/send-message.js";
 
 const PROVIDER_TYPE = "MICROSOFT365" as const;
 
@@ -28,6 +29,10 @@ const CAPABILITIES: ProviderCapabilities = {
 const AUTHORIZATION_ENDPOINT = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize";
 const TOKEN_ENDPOINT = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 const GRAPH_ME_ENDPOINT = "https://graph.microsoft.com/v1.0/me";
+const GRAPH_SEND_MAIL_ENDPOINT = "https://graph.microsoft.com/v1.0/me/sendMail";
+
+// See GmailAdapter's identical constant for why this is bounded.
+const SEND_TIMEOUT_MS = 15_000;
 
 /**
  * Minimum scopes to (a) resolve the authenticated identity for mismatch
@@ -82,6 +87,19 @@ function toTokenSet(body: MicrosoftTokenResponse): OAuthTokenSet {
     ...(body.refresh_token ? { refreshToken: body.refresh_token } : {}),
     expiresAt: new Date(Date.now() + body.expires_in * 1000),
     scope: body.scope ?? OAUTH_SCOPES.join(" "),
+  };
+}
+
+function buildSendMailBody(command: SendMessageCommand): unknown {
+  return {
+    message: {
+      subject: command.subject,
+      body: { contentType: "Text", content: command.body },
+      toRecipients: [{ emailAddress: { address: command.to } }],
+    },
+    // Graph defaults this to true, but leaving it implicit would depend on
+    // a default this adapter never actually verified — explicit here.
+    saveToSentItems: true,
   };
 }
 
@@ -203,6 +221,59 @@ export class Microsoft365Adapter implements ProviderAdapter {
       latencyMs,
       message: validation.message,
     };
+  }
+
+  /**
+   * Real Microsoft Graph `sendMail`. Same never-throws contract as
+   * `GmailAdapter.sendMessage` — see that file's doc comment for the
+   * `SEND_UNKNOWN` reasoning, which applies identically here. One further
+   * limitation specific to Graph, not Gmail: `sendMail` is a fire-and-forget
+   * action that returns `202 Accepted` with an empty body on success —
+   * Graph never returns a message id from this endpoint at all, unlike
+   * Gmail. `providerMessageId` is therefore always absent for Microsoft
+   * sends; this is a genuine API limitation, not an oversight (see
+   * docs/ARCHITECTURE.md's idempotency section).
+   */
+  async sendMessage(credential: ProviderCredential | undefined, command: SendMessageCommand): Promise<ProviderSendOutcome> {
+    if (!this.config) {
+      return { status: "PERMANENT_FAILURE", retryable: false, safeReason: "Microsoft is not configured for this deployment." };
+    }
+    const accessToken = accessTokenOf(credential);
+    if (!accessToken) {
+      return { status: "AUTH_FAILED", retryable: false, safeReason: "No Microsoft credential is stored for this mailbox." };
+    }
+
+    let response: Response;
+    try {
+      response = await this.fetchImpl(GRAPH_SEND_MAIL_ENDPOINT, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify(buildSendMailBody(command)),
+        signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+      });
+    } catch {
+      return {
+        status: "SEND_UNKNOWN",
+        retryable: false,
+        safeReason: "Could not confirm whether Microsoft Graph received the send request (network failure or timeout).",
+      };
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      return { status: "AUTH_FAILED", retryable: false, safeReason: "Microsoft Graph rejected the stored credential." };
+    }
+    if (response.status === 429) {
+      return { status: "RATE_LIMITED", retryable: true, safeReason: "Microsoft Graph throttled the send request." };
+    }
+    if (response.status >= 500) {
+      return { status: "TEMPORARY_FAILURE", retryable: true, safeReason: "Microsoft Graph returned a server error." };
+    }
+    if (!response.ok) {
+      return { status: "PERMANENT_FAILURE", retryable: false, safeReason: "Microsoft Graph rejected the send request as invalid." };
+    }
+
+    // 202 Accepted, empty body — see the doc comment above.
+    return { status: "ACCEPTED", retryable: false };
   }
 
   private getAuthorizationUrl(request: OAuthAuthorizationRequest): string {

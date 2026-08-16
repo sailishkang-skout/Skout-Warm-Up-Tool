@@ -36,11 +36,13 @@ src/
     tenancy/                 Tenant aggregate, tenant lookup
     auth/                    API keys, request → TenantId resolution
     mailbox/                 Mailbox aggregate + onboarding state machine
-    providers/                MailboxProvider interface + gmail/microsoft365/smtp-imap adapters
+    providers/                MailboxProvider interface + gmail/microsoft365/smtp-imap adapters;
+                              Gmail/Microsoft 365 also implement real sendMessage (Stage 9)
     domain-intelligence/     SPF/DKIM/DMARC/MX/DNS signal evaluation (Redis → Postgres → DNS)
-    warmup/                  WarmupProfile + warmup state machine, ramp/decision engine,
-                              execution intents, claim-based worker (no real send yet — see
-                              warmup/README.md)
+    warmup/                  WarmupProfile (+ management API) + warmup state machine,
+                              ramp/decision engine, execution intents, claim-based worker, and
+                              the real provider send boundary — see warmup/README.md, in
+                              particular its SEND_UNKNOWN/idempotency limitation
     conversations/           Controlled mailbox-to-mailbox interactions
     scheduling/               BullMQ job creation, retry/backoff, distributed locks (not yet implemented)
     delivery-events/         Delivery event ingestion/normalization
@@ -126,25 +128,81 @@ Warmup Execution Intent → Provider Send Boundary`):
   does not need to know about session state for this to be safe.
 - **PROVIDER ADAPTER SENDS** — `application/warmup-send-provider.ts`
   (`WarmupSendProvider`) is the provider-neutral boundary warmup code
-  depends on; it never imports a concrete provider adapter directly.
-  `infrastructure/unimplemented-warmup-send-provider.ts` is the only
-  implementation registered in composition this stage — every call
-  reports an honest, non-retryable failure rather than fabricating
-  success or attempting a real send (see warmup/README.md). This exercises
-  the full claim → lease → safety-gate → port → record pipeline without
-  ever attempting a real network send. A real provider-backed
-  implementation is later work.
+  depends on; it never imports a concrete provider adapter directly. Since
+  Stage 9, `infrastructure/adapter-warmup-send-provider.ts` is the one
+  real, provider-agnostic implementation registered in composition — it
+  resolves the mailbox's `ProviderAdapter` via `ProviderRegistry`,
+  refreshes its credential via `providers/application/resolve-fresh-credential.ts`
+  (the same function `mailbox`/`oauth` already use), and calls the
+  adapter's own `sendMessage`. `infrastructure/unimplemented-warmup-send-provider.ts`
+  remains as a safe fallback/test double, no longer used in production
+  composition.
+
+### Provider send boundary, idempotency, and `SEND_UNKNOWN` (Stage 9)
+
+`ProviderAdapter.sendMessage` (optional, like `oauth` — `providers/domain/provider-adapter.ts`)
+is real on `GmailAdapter`/`Microsoft365Adapter`, absent on `SmtpImapAdapter`
+(no safe implementation exists yet — never faked). It never throws for a
+provider-side outcome; every branch (`ACCEPTED`/`AUTH_FAILED`/`RATE_LIMITED`/
+`TEMPORARY_FAILURE`/`PERMANENT_FAILURE`/`SEND_UNKNOWN`) is a normal return
+value the caller classifies.
+
+**Exactly-once delivery is not guaranteed, and cannot be with these
+provider APIs.** Neither Gmail's `messages.send` nor Microsoft Graph's
+`sendMail` accept a client-supplied idempotency token. If the HTTP request
+reaches the provider but this process never receives the response
+(timeout, connection reset), there is no way to know whether the provider
+actually sent the message. `SEND_UNKNOWN` is that state:
+
+- The execution worker (`application/execution-worker.ts`) records it as
+  a distinct, terminal `ExecutionIntentStatus` — never `FAILED`, and
+  checked *before* `classifyRetry` so it can never be routed into the
+  generic retry path by a future change to that function.
+- `claimNext` only ever selects `PENDING` rows, so a `SEND_UNKNOWN` intent
+  is never automatically retried or reclaimed by any worker.
+- This is an at-least-possible-duplicate / at-least-possible-never-sent
+  state requiring manual reconciliation (checking the mailbox's actual
+  sent history) — **no reconciliation tooling exists yet**; a
+  `SEND_UNKNOWN` row today just sits in `warmup_execution_intents` for a
+  human to inspect directly.
+
+What Stage 9 *does* guarantee: Skout's own system will never create two
+execution intents for the same `(session, warmupDay, executionSlot)` —
+`computeIdempotencyKey` is enforced unique in Postgres. That is
+idempotency at the intent-creation layer, not at the provider-delivery
+layer; the two are deliberately not conflated.
+
+`OAuth token refresh` happens automatically before every send attempt via
+`resolveFreshCredential` (refresh within 60s of expiry; a dead refresh
+token is revoked, never silently retried forever, and the mailbox's
+authentication health degrades naturally through the existing `health`
+pipeline on the next assessment). No new OAuth implementation was
+introduced.
+
+### Warmup Profile management API (Stage 9)
+
+`GET`/`POST`/`PATCH /api/v1/mailboxes/:id/warmup/profile`
+(`warmup/api/warmup-profile-routes.ts`, `application/warmup-profile-service.ts`)
+manage `WarmupProfile` configuration (target/starting/maximum daily
+volume, ramp strategy, risk tolerance, pause conditions) only.
+`tenantId`/`mailboxId` are always server-derived; `active`,
+session/decision/intent/lease state are never reachable through this API
+— `WarmupService`'s `start`/`pause`/`resume`/`stop` remain the sole
+authority for those (Stage 8, extended by Stage 9's `setActive` calls
+from `startWarmup`/`stopWarmup`).
 
 ## Database
 
 PostgreSQL, hand-written SQL migrations run via a small migration runner (no
 ORM, no SQLite). Every tenant-scoped table carries `tenant_id` with a foreign
 key and index; all queries touching tenant data enforce tenant isolation at
-the repository layer. Implemented so far (migrations 001-015): `tenants`,
+the repository layer. Implemented so far (migrations 001-016): `tenants`,
 `mailboxes`, `provider_accounts`, `api_credentials`, `audit_events`,
 `provider_credentials`, `connection_attempts`, `domain_intelligence`,
 `mailbox_signals`, `mailbox_assessments`, `warmup_profiles`,
-`warmup_sessions`, `warmup_decisions`, `warmup_execution_intents`. Still
+`warmup_sessions`, `warmup_decisions`, `warmup_execution_intents` (migration
+016 widens its `status` CHECK constraint to add `SEND_UNKNOWN` — see the
+idempotency section above — without editing migration 015 itself). Still
 planned for later stages: `conversations`, `conversation_messages`,
 `delivery_events`, `warmup_metrics`.
 
@@ -165,7 +223,10 @@ conversations) depends only on the interface — provider selection is a small
 factory (`ProviderRegistry`) in `providers/application`, never a type-switch
 scattered across callers. Each adapter's README documents the external
 configuration it needs; an unconfigured adapter fails closed rather than
-faking success.
+faking success. `sendMessage` is real on Gmail/Microsoft 365 (Stage 9) and
+absent on SMTP/IMAP — optional on the interface, the same pattern `oauth`
+already used, so a provider without a safe implementation is never forced
+to fake one.
 
 ## Security
 
@@ -193,8 +254,8 @@ are never exposed to callers.
 5. Mailbox domain and provider abstraction
 6. Mailbox onboarding/state machine
 7. Warmup profile and mailbox intelligence pipeline (health/risk/policy/domain-intelligence)
-8. Warmup engine foundation — state machine, decision engine, execution intents, worker (execution uses a non-sending fallback provider) — **this stage**
-9. Conversation engine
+8. Warmup engine foundation — state machine, decision engine, execution intents, worker (execution used a non-sending fallback provider)
+9. Real provider send boundary (Gmail/Microsoft 365 sendMessage, SEND_UNKNOWN handling) and Warmup Profile management API — **this stage**; conversation engine and mailbox-to-mailbox partner selection remain future work
 10. Delivery/event processing
 11. Health/risk/intelligence engines
 12. Policy/readiness engine

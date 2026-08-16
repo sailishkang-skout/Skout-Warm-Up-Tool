@@ -24,6 +24,7 @@ export const WARMUP_DECISION_REASON_CODES = [
   "COOLDOWN_ACTIVE",
   "SESSION_NOT_ACTIVE",
   "RAMP_PROGRESSION",
+  "PROVIDER_SEND_UNAVAILABLE",
 ] as const;
 export type WarmupDecisionReasonCode = (typeof WARMUP_DECISION_REASON_CODES)[number];
 

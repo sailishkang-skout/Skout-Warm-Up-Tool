@@ -151,4 +151,81 @@ describe("PostgresWarmupProfileRepository", () => {
     const repository = new PostgresWarmupProfileRepository(handle.database);
     await expect(repository.setActive(tenant.id, mailbox.id, true)).rejects.toThrow();
   });
+
+  it("update changes only the fields provided, leaving the rest untouched", async () => {
+    const { tenant, mailbox } = await createTenantAndMailbox();
+    const repository = new PostgresWarmupProfileRepository(handle.database);
+    await repository.create({
+      tenantId: tenant.id,
+      mailboxId: mailbox.id,
+      targetDailyVolume: 30,
+      startingDailyVolume: 5,
+      maximumDailyVolume: 50,
+      rampStrategy: "STANDARD",
+      riskTolerance: "MEDIUM",
+    });
+
+    const updated = await repository.update(tenant.id, mailbox.id, { riskTolerance: "LOW" });
+    expect(updated.riskTolerance).toBe("LOW");
+    expect(updated.rampStrategy).toBe("STANDARD");
+    expect(updated.targetDailyVolume).toBe(30);
+  });
+
+  it("update can change pauseConditions", async () => {
+    const { tenant, mailbox } = await createTenantAndMailbox();
+    const repository = new PostgresWarmupProfileRepository(handle.database);
+    await repository.create({
+      tenantId: tenant.id,
+      mailboxId: mailbox.id,
+      targetDailyVolume: 30,
+      startingDailyVolume: 5,
+      maximumDailyVolume: 50,
+      rampStrategy: "STANDARD",
+      riskTolerance: "MEDIUM",
+    });
+
+    const updated = await repository.update(tenant.id, mailbox.id, { pauseConditions: ["RISK_CRITICAL"] });
+    expect(updated.pauseConditions).toEqual(["RISK_CRITICAL"]);
+  });
+
+  it("update never changes active — there is no such field on UpdateWarmupProfileInput", async () => {
+    const { tenant, mailbox } = await createTenantAndMailbox();
+    const repository = new PostgresWarmupProfileRepository(handle.database);
+    await repository.create({
+      tenantId: tenant.id,
+      mailboxId: mailbox.id,
+      targetDailyVolume: 30,
+      startingDailyVolume: 5,
+      maximumDailyVolume: 50,
+      rampStrategy: "STANDARD",
+      riskTolerance: "MEDIUM",
+    });
+    await repository.setActive(tenant.id, mailbox.id, true);
+
+    const updated = await repository.update(tenant.id, mailbox.id, { riskTolerance: "HIGH" });
+    expect(updated.active).toBe(true);
+  });
+
+  it("update throws NotFoundError for a mailbox with no profile", async () => {
+    const { tenant, mailbox } = await createTenantAndMailbox();
+    const repository = new PostgresWarmupProfileRepository(handle.database);
+    await expect(repository.update(tenant.id, mailbox.id, { riskTolerance: "LOW" })).rejects.toThrow();
+  });
+
+  it("update enforces tenant isolation", async () => {
+    const { tenant: tenantA, mailbox: mailboxA } = await createTenantAndMailbox("a2@example.com");
+    const tenantB = await new PostgresTenantRepository(handle.database).create({ name: "Tenant B2" });
+    const repository = new PostgresWarmupProfileRepository(handle.database);
+    await repository.create({
+      tenantId: tenantA.id,
+      mailboxId: mailboxA.id,
+      targetDailyVolume: 30,
+      startingDailyVolume: 5,
+      maximumDailyVolume: 50,
+      rampStrategy: "STANDARD",
+      riskTolerance: "MEDIUM",
+    });
+
+    await expect(repository.update(tenantB.id, mailboxA.id, { riskTolerance: "LOW" })).rejects.toThrow();
+  });
 });

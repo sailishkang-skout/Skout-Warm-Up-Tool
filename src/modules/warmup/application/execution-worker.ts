@@ -80,7 +80,10 @@ export function createExecutionWorker(deps: CreateExecutionWorkerDeps): Executio
         return cancel(claimed, workerId, `Warmup session is no longer ACTIVE (currently ${session.state}).`);
       }
 
-      const assessment = await mailboxAssessmentService.getAssessment(claimed.tenantId, claimed.mailboxId);
+      const [assessment, capabilities] = await Promise.all([
+        mailboxAssessmentService.getAssessment(claimed.tenantId, claimed.mailboxId),
+        mailboxService.getCapabilities(claimed.tenantId, claimed.mailboxId),
+      ]);
       const gate = evaluateSafetyGate({
         sessionState: session.state,
         mailboxEnabled: mailbox.enabled,
@@ -91,6 +94,7 @@ export function createExecutionWorker(deps: CreateExecutionWorkerDeps): Executio
         maximumVolume: Math.max(claimed.volume, profile.maximumDailyVolume),
         profileActive: profile.active,
         pauseConditions: profile.pauseConditions,
+        providerCanSend: capabilities.canSend,
       });
       if (!gate.passed) {
         return cancel(claimed, workerId, gate.reasons[0] ?? "Safety gate re-check failed at execution time.");
@@ -108,6 +112,26 @@ export function createExecutionWorker(deps: CreateExecutionWorkerDeps): Executio
 
       if (result.status === "ACCEPTED") {
         return intentRepository.recordResult(claimed.tenantId, claimed.id, workerId, { status: "SENT", result });
+      }
+
+      // Stage 9 spec section 7 — the single most important rule in this
+      // stage: the provider's actual receipt of the send could not be
+      // confirmed, so this can NEVER be treated as retryable. A retry here
+      // risks sending a genuine duplicate, since neither Gmail nor
+      // Microsoft Graph expose a client-supplied idempotency token. This
+      // intent is left in `SEND_UNKNOWN` — terminal, never reclaimed by
+      // `claimNext` (which only selects `PENDING`) — for manual
+      // reconciliation. Deliberately checked before `classifyRetry`, not
+      // folded into its generic logic, so this can never accidentally
+      // become retryable through a future change to that function.
+      if (result.status === "SEND_UNKNOWN") {
+        await auditRecorder.record({
+          tenantId: claimed.tenantId,
+          eventType: "WARMUP_EXECUTION_UNKNOWN",
+          actorType: "system",
+          metadata: { mailboxId: claimed.mailboxId, sessionId: claimed.sessionId, intentId: claimed.id },
+        });
+        return intentRepository.recordResult(claimed.tenantId, claimed.id, workerId, { status: "SEND_UNKNOWN", result });
       }
 
       const retryDecision = classifyRetry(result, claimed.attemptCount);

@@ -166,3 +166,78 @@ describe("GmailAdapter — configured", () => {
     expect(health.latencyMs).toBeGreaterThanOrEqual(0);
   });
 });
+
+const SEND_COMMAND = { from: "alice@example.com", to: "alice@example.com", subject: "Warmup check-in", body: "Automated deliverability check-in." };
+
+describe("GmailAdapter.sendMessage", () => {
+  it("returns ACCEPTED with the provider message id on success", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ id: "msg-123" }));
+    const adapter = new GmailAdapter({ config: CONFIG, fetchImpl });
+
+    const outcome = await adapter.sendMessage(credentialWithToken("at"), SEND_COMMAND);
+
+    expect(outcome).toEqual({ status: "ACCEPTED", retryable: false, providerMessageId: "msg-123" });
+    const [url, requestInit] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://gmail.googleapis.com/gmail/v1/users/me/messages/send");
+    const body = JSON.parse(requestInit.body as string) as { raw: string };
+    const decoded = Buffer.from(body.raw, "base64url").toString("utf-8");
+    expect(decoded).toContain("To: alice@example.com");
+    expect(decoded).toContain("Subject: Warmup check-in");
+  });
+
+  it("returns PERMANENT_FAILURE when not configured", async () => {
+    const adapter = new GmailAdapter();
+    const outcome = await adapter.sendMessage(credentialWithToken("at"), SEND_COMMAND);
+    expect(outcome).toMatchObject({ status: "PERMANENT_FAILURE", retryable: false });
+  });
+
+  it("returns AUTH_FAILED when no credential is stored", async () => {
+    const adapter = new GmailAdapter({ config: CONFIG, fetchImpl: vi.fn() });
+    const outcome = await adapter.sendMessage(undefined, SEND_COMMAND);
+    expect(outcome).toMatchObject({ status: "AUTH_FAILED", retryable: false });
+  });
+
+  it("returns AUTH_FAILED on a 401/403 response", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+    const adapter = new GmailAdapter({ config: CONFIG, fetchImpl });
+    const outcome = await adapter.sendMessage(credentialWithToken("at"), SEND_COMMAND);
+    expect(outcome).toMatchObject({ status: "AUTH_FAILED", retryable: false });
+  });
+
+  it("returns RATE_LIMITED (retryable) on a 429", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 429 }));
+    const adapter = new GmailAdapter({ config: CONFIG, fetchImpl });
+    const outcome = await adapter.sendMessage(credentialWithToken("at"), SEND_COMMAND);
+    expect(outcome).toMatchObject({ status: "RATE_LIMITED", retryable: true });
+  });
+
+  it("returns TEMPORARY_FAILURE (retryable) on a 5xx", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 503 }));
+    const adapter = new GmailAdapter({ config: CONFIG, fetchImpl });
+    const outcome = await adapter.sendMessage(credentialWithToken("at"), SEND_COMMAND);
+    expect(outcome).toMatchObject({ status: "TEMPORARY_FAILURE", retryable: true });
+  });
+
+  it("returns PERMANENT_FAILURE (not retryable) on a 400", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ error: { message: "invalid recipient" } }, 400));
+    const adapter = new GmailAdapter({ config: CONFIG, fetchImpl });
+    const outcome = await adapter.sendMessage(credentialWithToken("at"), SEND_COMMAND);
+    expect(outcome).toMatchObject({ status: "PERMANENT_FAILURE", retryable: false });
+  });
+
+  it("returns SEND_UNKNOWN (never retryable) when the request times out or the network fails — receipt cannot be confirmed", async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error("network failure mid-request"));
+    const adapter = new GmailAdapter({ config: CONFIG, fetchImpl });
+    const outcome = await adapter.sendMessage(credentialWithToken("at"), SEND_COMMAND);
+    expect(outcome).toMatchObject({ status: "SEND_UNKNOWN", retryable: false });
+  });
+
+  it("never leaks the access token or a raw response body in safeReason", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ error: { message: "super-secret-detail token=abc123" } }, 400));
+    const adapter = new GmailAdapter({ config: CONFIG, fetchImpl });
+    const outcome = await adapter.sendMessage(credentialWithToken("super-secret-access-token"), SEND_COMMAND);
+    const serialized = JSON.stringify(outcome);
+    expect(serialized).not.toContain("super-secret-access-token");
+    expect(serialized).not.toContain("super-secret-detail");
+  });
+});

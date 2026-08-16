@@ -12,6 +12,7 @@ import { createExecutionWorker } from "../../src/modules/warmup/application/exec
 import { PostgresMailboxRepository } from "../../src/modules/mailbox/infrastructure/postgres-mailbox-repository.js";
 import type { Mailbox } from "../../src/modules/mailbox/domain/mailbox.js";
 import type { MailboxService } from "../../src/modules/mailbox/application/mailbox-service.js";
+import type { ProviderCapabilities } from "../../src/modules/providers/domain/provider-capabilities.js";
 import type { MailboxAssessmentService } from "../../src/modules/health/application/mailbox-assessment-service.js";
 import type { AssessmentSnapshot } from "../../src/modules/health/domain/assessment-snapshot.js";
 import type { MailboxHealthAssessment } from "../../src/modules/health/domain/mailbox-health.js";
@@ -65,7 +66,17 @@ const HEALTHY: MailboxHealthAssessment = {
   assessedAt: new Date(),
 };
 
-function fakeMailboxService(mailbox: Mailbox): MailboxService {
+const SENDABLE_CAPABILITIES: ProviderCapabilities = {
+  canSend: true,
+  canReceive: true,
+  supportsThreads: true,
+  supportsFolders: false,
+  supportsOAuth: true,
+  supportsSmtp: false,
+  supportsImap: false,
+};
+
+function fakeMailboxService(mailbox: Mailbox, capabilities: ProviderCapabilities = SENDABLE_CAPABILITIES): MailboxService {
   return {
     async createMailbox() {
       throw new Error("not used");
@@ -89,7 +100,7 @@ function fakeMailboxService(mailbox: Mailbox): MailboxService {
       throw new Error("not used");
     },
     async getCapabilities() {
-      throw new Error("not used");
+      return capabilities;
     },
     async getConnectionSnapshot() {
       throw new Error("not used");
@@ -126,6 +137,9 @@ function fakeProfileRepository(profile: WarmupProfile): WarmupProfileRepository 
     },
     async findByMailboxId() {
       return profile;
+    },
+    async update() {
+      throw new Error("not used");
     },
     async setActive() {
       throw new Error("not used");
@@ -408,5 +422,53 @@ describe("execution worker", () => {
     const rows = await handle.database.query("SELECT last_result FROM warmup_execution_intents WHERE id = $1", [fixtures.intent.id]);
     const serialized = JSON.stringify(rows);
     expect(serialized).not.toMatch(/accessToken|refreshToken|password/i);
+  });
+
+  it("cancels rather than sends when the provider does not currently support sending (Stage 9 final safety gate)", async () => {
+    const fixtures = await createFixtures();
+    let providerCalled = false;
+    const worker = createExecutionWorker({
+      intentRepository: fixtures.intentRepository,
+      sessionRepository: fixtures.sessionRepository,
+      warmupProfileRepository: fakeProfileRepository(fixtures.profile),
+      mailboxService: fakeMailboxService({ ...fixtures.mailbox, enabled: true }, { ...SENDABLE_CAPABILITIES, canSend: false }),
+      mailboxAssessmentService: fakeAssessmentService(eligibleAssessment),
+      sendProvider: fakeProvider(() => {
+        providerCalled = true;
+        return { status: "ACCEPTED", provider: "GMAIL", timestamp: new Date(), retryable: false };
+      }),
+      auditRecorder: noopAuditRecorder(),
+    });
+
+    const result = await worker.processNext("worker-1");
+    expect(result?.status).toBe("CANCELLED");
+    expect(providerCalled).toBe(false);
+  });
+
+  it("SEND_UNKNOWN (network/timeout, receipt unconfirmed) is recorded as a distinct terminal status — never retried, never treated as FAILED", async () => {
+    const fixtures = await createFixtures();
+    const worker = createExecutionWorker({
+      intentRepository: fixtures.intentRepository,
+      sessionRepository: fixtures.sessionRepository,
+      warmupProfileRepository: fakeProfileRepository(fixtures.profile),
+      mailboxService: fakeMailboxService({ ...fixtures.mailbox, enabled: true }),
+      mailboxAssessmentService: fakeAssessmentService(eligibleAssessment),
+      sendProvider: fakeProvider(() => ({
+        status: "SEND_UNKNOWN",
+        provider: "GMAIL",
+        timestamp: new Date(),
+        retryable: false,
+        safeReason: "Could not confirm whether Gmail received the send request.",
+      })),
+      auditRecorder: noopAuditRecorder(),
+    });
+
+    const result = await worker.processNext("worker-1");
+    expect(result?.status).toBe("SEND_UNKNOWN");
+    expect(result?.scheduledFor).toBeUndefined();
+
+    // Terminal — claimNext only ever selects PENDING, so a SEND_UNKNOWN
+    // intent is never reclaimed/retried by a later worker call.
+    await expect(worker.processNext("worker-2")).resolves.toBeUndefined();
   });
 });

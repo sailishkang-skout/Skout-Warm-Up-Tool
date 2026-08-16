@@ -9,6 +9,7 @@ import type { ProviderConnectionValidationResult } from "../../domain/provider-c
 import type { ProviderCredential } from "../../domain/provider-credential.js";
 import type { ProviderHealthResult } from "../../domain/provider-health.js";
 import type { OAuthAuthorizationRequest, OAuthCodeExchangeRequest, OAuthOperations, OAuthTokenSet } from "../../domain/oauth-operations.js";
+import type { ProviderSendOutcome, SendMessageCommand } from "../../domain/send-message.js";
 
 const PROVIDER_TYPE = "GMAIL" as const;
 
@@ -25,6 +26,13 @@ const CAPABILITIES: ProviderCapabilities = {
 const AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const USERINFO_ENDPOINT = "https://openidconnect.googleapis.com/v1/userinfo";
+const SEND_ENDPOINT = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
+
+// Bounded so a hung connection can never leave a send attempt open
+// indefinitely — Stage 9 spec section 7's "timeout" case is exactly what
+// this guards against. Whatever happens after this fires is, by
+// definition, something this adapter cannot confirm the outcome of.
+const SEND_TIMEOUT_MS = 15_000;
 
 /**
  * Minimum scopes to (a) resolve the authenticated identity for mismatch
@@ -82,6 +90,31 @@ function toTokenSet(body: GoogleTokenResponse): OAuthTokenSet {
 function accessTokenOf(credential: ProviderCredential | undefined): string | undefined {
   const token = credential?.secretData.accessToken;
   return typeof token === "string" ? token : undefined;
+}
+
+/** RFC 5322 header values must not contain raw CR/LF — collapses any that somehow arrive to a single space rather than rejecting the send outright. */
+function sanitizeHeaderValue(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim();
+}
+
+function base64UrlEncode(input: string): string {
+  return Buffer.from(input, "utf-8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** Gmail's `messages.send` takes a full base64url-encoded RFC 5322 message, not a structured JSON body — this is the smallest valid one for a plain-text, single-recipient warmup message. */
+function buildRawMessage(command: SendMessageCommand): string {
+  const headers = [
+    `From: ${sanitizeHeaderValue(command.from)}`,
+    `To: ${sanitizeHeaderValue(command.to)}`,
+    `Subject: ${sanitizeHeaderValue(command.subject)}`,
+    "MIME-Version: 1.0",
+    'Content-Type: text/plain; charset="UTF-8"',
+  ];
+  return base64UrlEncode(`${headers.join("\r\n")}\r\n\r\n${command.body}`);
+}
+
+interface GmailSendResponse {
+  readonly id?: string;
 }
 
 /**
@@ -197,6 +230,62 @@ export class GmailAdapter implements ProviderAdapter {
       latencyMs,
       message: validation.message,
     };
+  }
+
+  /**
+   * Real Gmail `messages.send`. Never throws for a provider-side outcome —
+   * every branch below returns a `ProviderSendOutcome`; only a genuine
+   * network/timeout failure (where Gmail's actual receipt of the request
+   * cannot be confirmed) resolves to `SEND_UNKNOWN` (Stage 9 spec section
+   * 7) rather than being guessed at as a retryable failure. Gmail's API
+   * has no client-supplied idempotency token, so this is the most this
+   * adapter can honestly know — see docs/ARCHITECTURE.md's idempotency
+   * section.
+   */
+  async sendMessage(credential: ProviderCredential | undefined, command: SendMessageCommand): Promise<ProviderSendOutcome> {
+    if (!this.config) {
+      return { status: "PERMANENT_FAILURE", retryable: false, safeReason: "Gmail is not configured for this deployment." };
+    }
+    const accessToken = accessTokenOf(credential);
+    if (!accessToken) {
+      return { status: "AUTH_FAILED", retryable: false, safeReason: "No Google credential is stored for this mailbox." };
+    }
+
+    let response: Response;
+    try {
+      response = await this.fetchImpl(SEND_ENDPOINT, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ raw: buildRawMessage(command) }),
+        signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+      });
+    } catch {
+      // Deliberately not `error: unknown` details in `safeReason` — a
+      // network exception here could equally mean "never left this
+      // process" or "Gmail received it and the response was lost." Only
+      // an actual HTTP response below counts as a confirmed outcome.
+      return {
+        status: "SEND_UNKNOWN",
+        retryable: false,
+        safeReason: "Could not confirm whether Gmail received the send request (network failure or timeout).",
+      };
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      return { status: "AUTH_FAILED", retryable: false, safeReason: "Gmail rejected the stored credential." };
+    }
+    if (response.status === 429) {
+      return { status: "RATE_LIMITED", retryable: true, safeReason: "Gmail rate-limited the send request." };
+    }
+    if (response.status >= 500) {
+      return { status: "TEMPORARY_FAILURE", retryable: true, safeReason: "Gmail returned a server error." };
+    }
+    if (!response.ok) {
+      return { status: "PERMANENT_FAILURE", retryable: false, safeReason: "Gmail rejected the send request as invalid." };
+    }
+
+    const body = (await response.json().catch(() => ({}))) as GmailSendResponse;
+    return { status: "ACCEPTED", retryable: false, ...(body.id ? { providerMessageId: body.id } : {}) };
   }
 
   private getAuthorizationUrl(request: OAuthAuthorizationRequest): string {

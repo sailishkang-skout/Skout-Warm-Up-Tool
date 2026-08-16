@@ -107,3 +107,76 @@ describe("Microsoft365Adapter — configured", () => {
     await expect(adapter.getMailboxIdentity(undefined)).rejects.toBeInstanceOf(ProviderError);
   });
 });
+
+const SEND_COMMAND = { from: "alice@example.com", to: "alice@example.com", subject: "Warmup check-in", body: "Automated deliverability check-in." };
+
+describe("Microsoft365Adapter.sendMessage", () => {
+  it("returns ACCEPTED on a 202 — Graph's sendMail never returns a message id", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
+    const adapter = new Microsoft365Adapter({ config: CONFIG, fetchImpl });
+
+    const outcome = await adapter.sendMessage(credentialWithToken("at"), SEND_COMMAND);
+
+    expect(outcome).toEqual({ status: "ACCEPTED", retryable: false });
+    const [url, requestInit] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://graph.microsoft.com/v1.0/me/sendMail");
+    const body = JSON.parse(requestInit.body as string) as { message: { toRecipients: { emailAddress: { address: string } }[] } };
+    expect(body.message.toRecipients[0]?.emailAddress.address).toBe("alice@example.com");
+  });
+
+  it("returns PERMANENT_FAILURE when not configured", async () => {
+    const adapter = new Microsoft365Adapter();
+    const outcome = await adapter.sendMessage(credentialWithToken("at"), SEND_COMMAND);
+    expect(outcome).toMatchObject({ status: "PERMANENT_FAILURE", retryable: false });
+  });
+
+  it("returns AUTH_FAILED when no credential is stored", async () => {
+    const adapter = new Microsoft365Adapter({ config: CONFIG, fetchImpl: vi.fn() });
+    const outcome = await adapter.sendMessage(undefined, SEND_COMMAND);
+    expect(outcome).toMatchObject({ status: "AUTH_FAILED", retryable: false });
+  });
+
+  it("returns AUTH_FAILED on a 401/403 response", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 403 }));
+    const adapter = new Microsoft365Adapter({ config: CONFIG, fetchImpl });
+    const outcome = await adapter.sendMessage(credentialWithToken("at"), SEND_COMMAND);
+    expect(outcome).toMatchObject({ status: "AUTH_FAILED", retryable: false });
+  });
+
+  it("returns RATE_LIMITED (retryable) on a 429", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 429 }));
+    const adapter = new Microsoft365Adapter({ config: CONFIG, fetchImpl });
+    const outcome = await adapter.sendMessage(credentialWithToken("at"), SEND_COMMAND);
+    expect(outcome).toMatchObject({ status: "RATE_LIMITED", retryable: true });
+  });
+
+  it("returns TEMPORARY_FAILURE (retryable) on a 5xx", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 502 }));
+    const adapter = new Microsoft365Adapter({ config: CONFIG, fetchImpl });
+    const outcome = await adapter.sendMessage(credentialWithToken("at"), SEND_COMMAND);
+    expect(outcome).toMatchObject({ status: "TEMPORARY_FAILURE", retryable: true });
+  });
+
+  it("returns PERMANENT_FAILURE (not retryable) on a 400", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ error: { message: "invalid recipient" } }, 400));
+    const adapter = new Microsoft365Adapter({ config: CONFIG, fetchImpl });
+    const outcome = await adapter.sendMessage(credentialWithToken("at"), SEND_COMMAND);
+    expect(outcome).toMatchObject({ status: "PERMANENT_FAILURE", retryable: false });
+  });
+
+  it("returns SEND_UNKNOWN (never retryable) when the request times out or the network fails — receipt cannot be confirmed", async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error("network failure mid-request"));
+    const adapter = new Microsoft365Adapter({ config: CONFIG, fetchImpl });
+    const outcome = await adapter.sendMessage(credentialWithToken("at"), SEND_COMMAND);
+    expect(outcome).toMatchObject({ status: "SEND_UNKNOWN", retryable: false });
+  });
+
+  it("never leaks the access token or a raw response body in safeReason", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ error: { message: "super-secret-detail token=abc123" } }, 400));
+    const adapter = new Microsoft365Adapter({ config: CONFIG, fetchImpl });
+    const outcome = await adapter.sendMessage(credentialWithToken("super-secret-access-token"), SEND_COMMAND);
+    const serialized = JSON.stringify(outcome);
+    expect(serialized).not.toContain("super-secret-access-token");
+    expect(serialized).not.toContain("super-secret-detail");
+  });
+});

@@ -23,6 +23,15 @@ export const EXECUTION_INTENT_STATUSES = [
   "FAILED",
   "CANCELLED",
   "EXPIRED",
+  /**
+   * The provider's actual receipt could not be confirmed (Stage 9 spec
+   * section 7 — see `send-result.ts`'s `SEND_UNKNOWN`). Terminal, like
+   * `FAILED`, but deliberately distinct: `claimNext` only ever selects
+   * `PENDING` rows, so an intent that lands here is never automatically
+   * retried or reclaimed — it requires manual reconciliation (checking the
+   * mailbox's actual sent history) before anyone decides what happened.
+   */
+  "SEND_UNKNOWN",
 ] as const;
 export type ExecutionIntentStatus = (typeof EXECUTION_INTENT_STATUSES)[number];
 

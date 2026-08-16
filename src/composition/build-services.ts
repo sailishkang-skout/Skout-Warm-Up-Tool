@@ -23,8 +23,9 @@ import { createPostgresProviderCredentialStore } from "../modules/providers/infr
 import { SmtpImapAdapter } from "../modules/providers/infrastructure/smtp-imap/smtp-imap-adapter.js";
 import { PostgresTenantRepository } from "../modules/tenancy/infrastructure/postgres-tenant-repository.js";
 import { createExecutionWorker, type ExecutionWorker } from "../modules/warmup/application/execution-worker.js";
+import { createWarmupProfileService, type WarmupProfileService } from "../modules/warmup/application/warmup-profile-service.js";
 import { createWarmupService, type WarmupService } from "../modules/warmup/application/warmup-service.js";
-import { createUnimplementedWarmupSendProvider } from "../modules/warmup/infrastructure/unimplemented-warmup-send-provider.js";
+import { createAdapterWarmupSendProvider } from "../modules/warmup/infrastructure/adapter-warmup-send-provider.js";
 import { PostgresWarmupDecisionRepository } from "../modules/warmup/infrastructure/postgres-warmup-decision-repository.js";
 import { PostgresWarmupExecutionIntentRepository } from "../modules/warmup/infrastructure/postgres-warmup-execution-intent-repository.js";
 import { PostgresWarmupProfileRepository } from "../modules/warmup/infrastructure/postgres-warmup-profile-repository.js";
@@ -44,6 +45,7 @@ export interface AppServices {
   readonly domainIntelligenceService: DomainIntelligenceService;
   readonly mailboxAssessmentService: MailboxAssessmentService;
   readonly warmupService: WarmupService;
+  readonly warmupProfileService: WarmupProfileService;
   readonly executionWorker: ExecutionWorker;
 }
 
@@ -146,16 +148,28 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
     auditRecorder,
   });
 
-  // No real provider send capability exists yet this stage — every call
-  // reports an honest, non-retryable PERMANENT_FAILURE rather than
-  // fabricating success (see unimplemented-warmup-send-provider.ts).
+  const warmupProfileService = createWarmupProfileService({ mailboxService, warmupProfileRepository });
+
+  // The real Stage 9 send boundary: resolves the right ProviderAdapter
+  // through the same ProviderRegistry every other module uses, and the
+  // same resolveFreshCredential mailbox/oauth already depend on — no
+  // second credential-refresh implementation, no second OAuth system (see
+  // src/modules/warmup/infrastructure/adapter-warmup-send-provider.ts).
+  // SMTP/IMAP has no `sendMessage` implementation yet, so it safely
+  // reports PROVIDER_SEND_UNAVAILABLE rather than faking a send.
   const executionWorker = createExecutionWorker({
     intentRepository: warmupExecutionIntentRepository,
     sessionRepository: warmupSessionRepository,
     warmupProfileRepository,
     mailboxService,
     mailboxAssessmentService,
-    sendProvider: createUnimplementedWarmupSendProvider(),
+    sendProvider: createAdapterWarmupSendProvider({
+      mailboxService,
+      providerAccountRepository: new PostgresProviderAccountRepository(database),
+      credentialStore,
+      providerRegistry,
+      auditRecorder,
+    }),
     auditRecorder,
   });
 
@@ -168,6 +182,7 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
     domainIntelligenceService,
     mailboxAssessmentService,
     warmupService,
+    warmupProfileService,
     executionWorker,
   };
 }

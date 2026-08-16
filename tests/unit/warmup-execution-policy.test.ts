@@ -42,6 +42,7 @@ function input(overrides: Partial<WarmupExecutionPolicyInput> = {}): WarmupExecu
     risk: risk("LOW"),
     eligibility: eligibility("ELIGIBLE"),
     capacity: CAPACITY,
+    providerCanSend: true,
     profile: {
       startingDailyVolume: 5,
       targetDailyVolume: 50,
@@ -103,6 +104,12 @@ describe("decideWarmupExecution", () => {
   it("BLOCKs when send capability is unhealthy", () => {
     const outcome = decideWarmupExecution(input({ health: { ...HEALTHY, sending: "UNHEALTHY" } }));
     expect(outcome.decision).toBe("BLOCK");
+  });
+
+  it("BLOCKs when the provider does not currently support sending", () => {
+    const outcome = decideWarmupExecution(input({ providerCanSend: false }));
+    expect(outcome.decision).toBe("BLOCK");
+    expect(outcome.reasonCodes).toContain("PROVIDER_SEND_UNAVAILABLE");
   });
 
   it("REDUCEs when volume genuinely decreased from the previous day but nothing hard-blocks", () => {

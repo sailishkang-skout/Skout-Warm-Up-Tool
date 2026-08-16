@@ -1,7 +1,7 @@
 import { expectOne, type DatabaseClient } from "../../../shared/db/index.js";
 import { NotFoundError } from "../../../shared/errors/index.js";
 import { asMailboxId, asTenantId, asWarmupProfileId, type MailboxId, type TenantId } from "../../../shared/types/index.js";
-import type { CreateWarmupProfileInput, WarmupProfileRepository } from "../application/warmup-profile-repository.js";
+import type { CreateWarmupProfileInput, UpdateWarmupProfileInput, WarmupProfileRepository } from "../application/warmup-profile-repository.js";
 import type { RampStrategy, RiskTolerance, WarmupProfile } from "../domain/warmup-profile.js";
 
 interface WarmupProfileRow {
@@ -68,6 +68,34 @@ export class PostgresWarmupProfileRepository implements WarmupProfileRepository 
       [tenantId, mailboxId],
     );
     return rows[0] ? mapRow(rows[0]) : undefined;
+  }
+
+  async update(tenantId: TenantId, mailboxId: MailboxId, input: UpdateWarmupProfileInput): Promise<WarmupProfile> {
+    const rows = await this.db.query<WarmupProfileRow>(
+      `UPDATE warmup_profiles
+       SET target_daily_volume = COALESCE($3, target_daily_volume),
+           starting_daily_volume = COALESCE($4, starting_daily_volume),
+           maximum_daily_volume = COALESCE($5, maximum_daily_volume),
+           ramp_strategy = COALESCE($6, ramp_strategy),
+           risk_tolerance = COALESCE($7, risk_tolerance),
+           pause_conditions = COALESCE($8::jsonb, pause_conditions)
+       WHERE tenant_id = $1 AND mailbox_id = $2
+       RETURNING ${SELECT_COLUMNS}`,
+      [
+        tenantId,
+        mailboxId,
+        input.targetDailyVolume ?? null,
+        input.startingDailyVolume ?? null,
+        input.maximumDailyVolume ?? null,
+        input.rampStrategy ?? null,
+        input.riskTolerance ?? null,
+        input.pauseConditions ? JSON.stringify(input.pauseConditions) : null,
+      ],
+    );
+    if (!rows[0]) {
+      throw new NotFoundError("Warmup profile for mailbox", mailboxId);
+    }
+    return mapRow(rows[0]);
   }
 
   async setActive(tenantId: TenantId, mailboxId: MailboxId, active: boolean): Promise<WarmupProfile> {

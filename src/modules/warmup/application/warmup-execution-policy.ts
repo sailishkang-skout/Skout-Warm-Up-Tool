@@ -18,6 +18,8 @@ export interface WarmupExecutionPolicyInput {
   readonly eligibility: WarmupEligibilityAssessment;
   readonly capacity: CapacityRecommendation;
   readonly profile: RampPolicyProfileInput & { readonly pauseConditions: readonly string[] };
+  /** From `ProviderCapabilities.canSend` — Stage 9 spec section 10. */
+  readonly providerCanSend: boolean;
 }
 
 export interface WarmupExecutionDecisionResult {
@@ -71,6 +73,7 @@ export function decideWarmupExecution(input: WarmupExecutionPolicyInput): Warmup
     maximumVolume: target.maximum,
     profileActive: input.profile.active,
     pauseConditions: input.profile.pauseConditions,
+    providerCanSend: input.providerCanSend,
   });
 
   if (input.eligibility.decision === "REQUIRES_REVIEW") {

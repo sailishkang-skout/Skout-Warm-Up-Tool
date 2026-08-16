@@ -92,7 +92,10 @@ export function createWarmupService(deps: CreateWarmupServiceDeps): WarmupServic
     if (!profile) {
       throw new PolicyError("No warmup profile is configured for this mailbox");
     }
-    const assessment = await mailboxAssessmentService.getAssessment(tenantId, mailboxId);
+    const [assessment, capabilities] = await Promise.all([
+      mailboxAssessmentService.getAssessment(tenantId, mailboxId),
+      mailboxService.getCapabilities(tenantId, mailboxId),
+    ]);
     const day = computeWarmupDay(session.startedAt ?? new Date(), new Date());
     const previousTarget = session.currentDay === day ? session.currentDailyTarget : undefined;
 
@@ -105,6 +108,7 @@ export function createWarmupService(deps: CreateWarmupServiceDeps): WarmupServic
       risk: assessment.risk,
       eligibility: assessment.eligibility,
       capacity: assessment.capacity,
+      providerCanSend: capabilities.canSend,
       profile: {
         startingDailyVolume: profile.startingDailyVolume,
         targetDailyVolume: profile.targetDailyVolume,

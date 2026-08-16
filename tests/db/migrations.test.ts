@@ -29,6 +29,7 @@ const ALL_MIGRATION_FILENAMES = [
   "013_create_warmup_sessions.sql",
   "014_create_warmup_decisions.sql",
   "015_create_warmup_execution_intents.sql",
+  "016_add_send_unknown_intent_status.sql",
 ];
 
 let handle: TestDatabaseHandle;
@@ -97,7 +98,7 @@ describe("getMigrationStatus", () => {
   it("reports every migration as pending against an empty schema", async () => {
     const status = await getMigrationStatus(handle.pool);
     expect(status.every((entry) => !entry.applied)).toBe(true);
-    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
   });
 
   it("reports applied migrations with an appliedAt timestamp after running them", async () => {

@@ -14,6 +14,8 @@ export interface SafetyGateInput {
   readonly maximumVolume: number;
   readonly profileActive: boolean;
   readonly pauseConditions: readonly string[];
+  /** Whether the mailbox's provider currently exposes a real send capability (Stage 9 spec section 10) — from `ProviderCapabilities.canSend`, never a hardcoded per-provider assumption. */
+  readonly providerCanSend: boolean;
 }
 
 export interface SafetyGateResult {
@@ -78,6 +80,10 @@ export function evaluateSafetyGate(input: SafetyGateInput): SafetyGateResult {
   if (input.health.sending !== "HEALTHY") {
     codes.push("SEND_CAPABILITY_UNHEALTHY");
     reasons.push("Send capability is not healthy.");
+  }
+  if (!input.providerCanSend) {
+    codes.push("PROVIDER_SEND_UNAVAILABLE");
+    reasons.push("This provider does not currently support sending.");
   }
 
   if (input.pauseConditions.includes("RISK_CRITICAL") && input.riskLevel === "CRITICAL") {

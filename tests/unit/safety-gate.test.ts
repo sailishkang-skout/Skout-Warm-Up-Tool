@@ -23,6 +23,7 @@ function baseInput(overrides: Partial<SafetyGateInput> = {}): SafetyGateInput {
     maximumVolume: 10,
     profileActive: true,
     pauseConditions: [],
+    providerCanSend: true,
     ...overrides,
   };
 }
@@ -103,6 +104,12 @@ describe("evaluateSafetyGate", () => {
     const result = evaluateSafetyGate(baseInput({ health: { ...HEALTHY, sending: "UNHEALTHY" } }));
     expect(result.passed).toBe(false);
     expect(result.reasonCodes).toContain("SEND_CAPABILITY_UNHEALTHY");
+  });
+
+  it("blocks when the provider does not currently support sending", () => {
+    const result = evaluateSafetyGate(baseInput({ providerCanSend: false }));
+    expect(result.passed).toBe(false);
+    expect(result.reasonCodes).toContain("PROVIDER_SEND_UNAVAILABLE");
   });
 
   it("blocks when recommended volume is zero", () => {
