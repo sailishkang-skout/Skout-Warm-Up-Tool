@@ -2,6 +2,13 @@ import { createApiCredentialService, type ApiCredentialService } from "../module
 import { createAuthenticationService, type AuthenticationService } from "../modules/auth/application/authentication-service.js";
 import { PostgresApiCredentialRepository } from "../modules/auth/infrastructure/postgres-api-credential-repository.js";
 import { createPostgresAuditEventRecorder } from "../modules/audit/infrastructure/postgres-audit-event-recorder.js";
+import { createDomainIntelligenceService, type DomainIntelligenceService } from "../modules/domain-intelligence/application/domain-intelligence-service.js";
+import { createNodeDnsResolver } from "../modules/domain-intelligence/infrastructure/node-dns-resolver.js";
+import { createPostgresDomainIntelligenceRepository } from "../modules/domain-intelligence/infrastructure/postgres-domain-intelligence-repository.js";
+import { createRedisDomainCache } from "../modules/domain-intelligence/infrastructure/redis-domain-cache.js";
+import { createMailboxAssessmentService, type MailboxAssessmentService } from "../modules/health/application/mailbox-assessment-service.js";
+import { PostgresMailboxAssessmentRepository } from "../modules/health/infrastructure/postgres-mailbox-assessment-repository.js";
+import { PostgresMailboxSignalRepository } from "../modules/health/infrastructure/postgres-mailbox-signal-repository.js";
 import { createMailboxService, type MailboxService } from "../modules/mailbox/application/mailbox-service.js";
 import { PostgresMailboxRepository } from "../modules/mailbox/infrastructure/postgres-mailbox-repository.js";
 import { createOAuthConnectionService, type OAuthConnectionService } from "../modules/oauth/application/oauth-connection-service.js";
@@ -27,6 +34,8 @@ export interface AppServices {
   readonly mailboxService: MailboxService;
   readonly providerRegistry: ProviderRegistry;
   readonly oauthConnectionService: OAuthConnectionService;
+  readonly domainIntelligenceService: DomainIntelligenceService;
+  readonly mailboxAssessmentService: MailboxAssessmentService;
 }
 
 /**
@@ -100,5 +109,26 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
     mailboxService,
   });
 
-  return { authenticationService, credentialService, mailboxService, providerRegistry, oauthConnectionService };
+  const domainIntelligenceService = createDomainIntelligenceService({
+    cache: createRedisDomainCache(redis),
+    repository: createPostgresDomainIntelligenceRepository(database),
+    resolver: createNodeDnsResolver(),
+  });
+
+  const mailboxAssessmentService = createMailboxAssessmentService({
+    mailboxService,
+    domainIntelligenceService,
+    signalRepository: new PostgresMailboxSignalRepository(database),
+    assessmentRepository: new PostgresMailboxAssessmentRepository(database),
+  });
+
+  return {
+    authenticationService,
+    credentialService,
+    mailboxService,
+    providerRegistry,
+    oauthConnectionService,
+    domainIntelligenceService,
+    mailboxAssessmentService,
+  };
 }

@@ -37,15 +37,17 @@ src/
     auth/                    API keys, request → TenantId resolution
     mailbox/                 Mailbox aggregate + onboarding state machine
     providers/                MailboxProvider interface + gmail/microsoft365/smtp-imap adapters
-    domain-intelligence/     SPF/DKIM/DMARC/DNS signal evaluation
-    warmup/                  Warmup profile, ramp policy, recommended volume
+    domain-intelligence/     SPF/DKIM/DMARC/MX/DNS signal evaluation (Redis → Postgres → DNS)
+    warmup/                  WarmupProfile domain model — config only, no scheduling yet
     conversations/           Controlled mailbox-to-mailbox interactions
-    scheduling/               BullMQ job creation, retry/backoff, distributed locks
+    scheduling/               BullMQ job creation, retry/backoff, distributed locks (not yet implemented)
     delivery-events/         Delivery event ingestion/normalization
-    health/                  Multi-dimensional mailbox health engine
-    risk/                    Risk engine (current value + trend/velocity)
+    health/                  Mailbox health assessment (6 dimensions) + the cross-module
+                              orchestrator that assembles one AssessmentSnapshot per refresh
+    risk/                    Risk engine — weighted score + level, computed from health output
     reputation/              Provider/domain-level reputation signals
-    policy/                  Central decision engine (INCREASE/MAINTAIN/REDUCE/PAUSE/...)
+    policy/                  Warmup eligibility decision + capacity recommendation, computed
+                              from health + risk output
     audit/                   Append-only audit event log
   shared/
     config/  logger/  errors/  types/  db/  redis/  queue/  http/  observability/
@@ -61,6 +63,21 @@ docs/
 Each `modules/<name>/README.md` documents that module's responsibility,
 boundary (what it owns, what it must never reach into), and target
 implementation stage. Read those before adding code to a module.
+
+**Decision pipeline ownership** (`Mailbox → Signals → Evidence → Health →
+Risk → Eligibility → Capacity`, landed in Stage 7 — earlier than this
+document's original Stage 11/12 targets below, which predate that
+decision): `domain-intelligence` owns DNS facts about a sending domain;
+`health` owns raw-signal collection, health assessment, and the
+orchestrator that ties the whole pipeline into one persisted
+`AssessmentSnapshot`; `risk` owns risk scoring computed from health
+output; `policy` owns the two authoritative decisions (warmup eligibility,
+capacity recommendation) computed from health + risk output; `warmup` owns
+`WarmupProfile` configuration only — no scheduling or sending logic yet;
+`scheduling` remains unimplemented (job/queue foundation for a future
+stage). None of these modules call back "up" the chain or into each
+other's infrastructure — see each module's own README for its exact
+dependency direction.
 
 ## Database
 

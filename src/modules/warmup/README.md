@@ -1,20 +1,26 @@
 # Warmup
 
-**Responsibility**: the adaptive warmup engine — `WarmupProfile` (starting/
-target/maximum volume, ramp policy, safety limits, active days, risk tolerance),
-the current recommended-volume calculation, and the schedule generation that
-`scheduling` turns into jobs. Consumes signals from `health`, `risk`, and
-`domain-intelligence`, and consumes decisions from `policy` — it does not itself
-decide INCREASE/MAINTAIN/REDUCE/PAUSE (that is `policy`'s job); it executes what
-policy decides.
+**Responsibility**: `WarmupProfile` — configuration and intelligence inputs
+for a future warmup engine (starting/target/maximum daily volume, ramp
+strategy, risk tolerance, pause conditions). Deliberately not scheduling
+state: there is no send history, no cadence engine, no job queue here.
+`active` defaults to `false` at creation so a profile existing is never
+itself what starts sending.
 
 **Boundary**:
-- No single hard-coded global volume curve. Ramp behavior is expressed as a
-  provider-aware, tenant-configurable policy object, not a fixed table.
-- Depends on `mailbox` (for lifecycle state), `providers` (for provider-specific
-  limits/capabilities), `policy` (for the increase/maintain/reduce/pause
-  decision), and `conversations` (to execute warmup sends) — but does not reach
-  into any of their internals.
+- `domain/warmup-profile.ts` defines the model; `application/`,
+  `infrastructure/` hold its repository port and Postgres implementation
+  (`warmup_profiles`, one row per mailbox).
+- Consumes decisions from `policy` (`WarmupEligibilityAssessment`,
+  `CapacityRecommendation`) once an actual engine exists to read them — it
+  does not itself decide eligibility or capacity, and does not re-derive
+  either from `health`/`risk` directly.
+- `pauseConditions` holds stable, machine-readable codes (e.g.
+  `"RISK_CRITICAL"`, `"PROVIDER_DISCONNECTED"`) a future engine would check
+  before sending — not implemented here, just the declared configuration
+  surface for it.
+- No sending, scheduling, worker, or conversation logic lives here yet —
+  that is future work for this module plus `scheduling`.
 
-**Target stage**: Stage 7 (profile + scheduling foundation), Stage 8 (worker
-engine).
+**Target stage**: Stage 7 (profile foundation). Worker engine and actual
+sending are later stages.

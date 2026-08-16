@@ -101,6 +101,10 @@ export function createTestDatabaseHandle(): TestDatabaseHandle {
 
 /** Drops every object migrations create, for tests that exercise the migration runner itself from empty state. */
 export async function resetSchema(pool: Pool): Promise<void> {
+  await pool.query("DROP TABLE IF EXISTS warmup_profiles CASCADE");
+  await pool.query("DROP TABLE IF EXISTS mailbox_assessments CASCADE");
+  await pool.query("DROP TABLE IF EXISTS mailbox_signals CASCADE");
+  await pool.query("DROP TABLE IF EXISTS domain_intelligence CASCADE");
   await pool.query("DROP TABLE IF EXISTS connection_attempts CASCADE");
   await pool.query("DROP TABLE IF EXISTS provider_credentials CASCADE");
   await pool.query("DROP TABLE IF EXISTS audit_events CASCADE");
@@ -115,6 +119,6 @@ export async function resetSchema(pool: Pool): Promise<void> {
 /** For tests that need the schema in place but a clean set of rows between cases. */
 export async function truncateAppTables(pool: Pool): Promise<void> {
   await pool.query(
-    "TRUNCATE TABLE connection_attempts, provider_credentials, audit_events, api_credentials, provider_accounts, mailboxes, tenants RESTART IDENTITY",
+    "TRUNCATE TABLE warmup_profiles, mailbox_assessments, mailbox_signals, domain_intelligence, connection_attempts, provider_credentials, audit_events, api_credentials, provider_accounts, mailboxes, tenants RESTART IDENTITY",
   );
 }

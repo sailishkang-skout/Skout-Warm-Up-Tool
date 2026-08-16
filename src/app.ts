@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import Fastify from "fastify";
 import { credentialsRoutes } from "./modules/auth/api/credentials-routes.js";
+import { mailboxAssessmentRoutes } from "./modules/health/api/mailbox-assessment-routes.js";
 import { mailboxRoutes } from "./modules/mailbox/api/mailbox-routes.js";
 import { oauthRoutes } from "./modules/oauth/api/oauth-routes.js";
 import { buildServices } from "./composition/build-services.js";
@@ -47,6 +48,7 @@ export async function buildApp(config: AppConfig, logger: Logger, database: Data
   // src/modules/oauth/api/oauth-routes.ts for how the callback is secured
   // instead (single-use, tenant/mailbox/provider-bound OAuth state).
   await app.register(oauthRoutes(services.oauthConnectionService), { prefix: "/api/v1/oauth" });
+  await app.register(mailboxAssessmentRoutes(services.mailboxAssessmentService), { prefix: "/api/v1/mailboxes" });
 
   // "process is alive" — deliberately has no dependency on the database or
   // any other downstream system. A liveness probe that can fail because a
