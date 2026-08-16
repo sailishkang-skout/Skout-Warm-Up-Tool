@@ -24,6 +24,7 @@ import { SmtpImapAdapter } from "../modules/providers/infrastructure/smtp-imap/s
 import { PostgresTenantRepository } from "../modules/tenancy/infrastructure/postgres-tenant-repository.js";
 import { createExecutionWorker, type ExecutionWorker } from "../modules/warmup/application/execution-worker.js";
 import { createWarmupProfileService, type WarmupProfileService } from "../modules/warmup/application/warmup-profile-service.js";
+import { createWarmupReconciliationService, type WarmupReconciliationService } from "../modules/warmup/application/warmup-reconciliation-service.js";
 import { createWarmupService, type WarmupService } from "../modules/warmup/application/warmup-service.js";
 import { createAdapterWarmupSendProvider } from "../modules/warmup/infrastructure/adapter-warmup-send-provider.js";
 import { PostgresWarmupDecisionRepository } from "../modules/warmup/infrastructure/postgres-warmup-decision-repository.js";
@@ -46,6 +47,7 @@ export interface AppServices {
   readonly mailboxAssessmentService: MailboxAssessmentService;
   readonly warmupService: WarmupService;
   readonly warmupProfileService: WarmupProfileService;
+  readonly warmupReconciliationService: WarmupReconciliationService;
   readonly executionWorker: ExecutionWorker;
 }
 
@@ -149,6 +151,10 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
   });
 
   const warmupProfileService = createWarmupProfileService({ mailboxService, warmupProfileRepository });
+  const warmupReconciliationService = createWarmupReconciliationService({
+    intentRepository: warmupExecutionIntentRepository,
+    auditRecorder,
+  });
 
   // The real Stage 9 send boundary: resolves the right ProviderAdapter
   // through the same ProviderRegistry every other module uses, and the
@@ -183,6 +189,7 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
     mailboxAssessmentService,
     warmupService,
     warmupProfileService,
+    warmupReconciliationService,
     executionWorker,
   };
 }

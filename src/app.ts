@@ -7,6 +7,7 @@ import { mailboxAssessmentRoutes } from "./modules/health/api/mailbox-assessment
 import { mailboxRoutes } from "./modules/mailbox/api/mailbox-routes.js";
 import { oauthRoutes } from "./modules/oauth/api/oauth-routes.js";
 import { warmupProfileRoutes } from "./modules/warmup/api/warmup-profile-routes.js";
+import { warmupReconciliationRoutes } from "./modules/warmup/api/warmup-reconciliation-routes.js";
 import { warmupRoutes } from "./modules/warmup/api/warmup-routes.js";
 import { buildServices } from "./composition/build-services.js";
 import { authenticationPlugin } from "./plugins/authentication.js";
@@ -53,6 +54,7 @@ export async function buildApp(config: AppConfig, logger: Logger, database: Data
   await app.register(mailboxAssessmentRoutes(services.mailboxAssessmentService), { prefix: "/api/v1/mailboxes" });
   await app.register(warmupRoutes(services.warmupService), { prefix: "/api/v1/mailboxes" });
   await app.register(warmupProfileRoutes(services.warmupProfileService), { prefix: "/api/v1/mailboxes" });
+  await app.register(warmupReconciliationRoutes(services.warmupReconciliationService), { prefix: "/api/v1/mailboxes" });
 
   // "process is alive" — deliberately has no dependency on the database or
   // any other downstream system. A liveness probe that can fail because a

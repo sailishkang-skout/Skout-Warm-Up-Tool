@@ -32,6 +32,20 @@ export const EXECUTION_INTENT_STATUSES = [
    * mailbox's actual sent history) before anyone decides what happened.
    */
   "SEND_UNKNOWN",
+  /**
+   * A human (or future provider-specific tooling) has explicitly requested
+   * reconciliation of a `SEND_UNKNOWN` intent (hardening spec Gap A). Still
+   * terminal from the worker's point of view — `claimNext` only ever
+   * selects `PENDING` rows, so this is exactly as unreachable by automatic
+   * retry as `SEND_UNKNOWN` itself. The only transition into this status is
+   * `application/warmup-reconciliation-service.ts`'s explicit,
+   * tenant-scoped `reconcileUnknownExecution`, which never sends anything
+   * and never marks an intent `SENT` on its own — resolving *out* of this
+   * status (to a final `SENT`/`FAILED` once a human has actually checked
+   * the mailbox's sent history) is deliberately out of scope for this
+   * stage and requires direct operator action.
+   */
+  "REQUIRES_RECONCILIATION",
 ] as const;
 export type ExecutionIntentStatus = (typeof EXECUTION_INTENT_STATUSES)[number];
 

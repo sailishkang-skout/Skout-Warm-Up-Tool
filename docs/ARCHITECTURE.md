@@ -162,9 +162,9 @@ actually sent the message. `SEND_UNKNOWN` is that state:
   is never automatically retried or reclaimed by any worker.
 - This is an at-least-possible-duplicate / at-least-possible-never-sent
   state requiring manual reconciliation (checking the mailbox's actual
-  sent history) — **no reconciliation tooling exists yet**; a
-  `SEND_UNKNOWN` row today just sits in `warmup_execution_intents` for a
-  human to inspect directly.
+  sent history). See "Unknown-send reconciliation foundation" below for
+  the minimum safe scaffolding added for that (hardening pass) — it is
+  still not a full reconciliation system.
 
 What Stage 9 *does* guarantee: Skout's own system will never create two
 execution intents for the same `(session, warmupDay, executionSlot)` —
@@ -178,6 +178,37 @@ token is revoked, never silently retried forever, and the mailbox's
 authentication health degrades naturally through the existing `health`
 pipeline on the next assessment). No new OAuth implementation was
 introduced.
+
+### Unknown-send reconciliation foundation (hardening pass)
+
+`SEND_UNKNOWN` had no operational path out of it — a row just sat in
+`warmup_execution_intents` for direct database inspection. This adds the
+minimum safe scaffolding, not a full reconciliation system:
+
+```
+SEND_UNKNOWN → REQUIRES_RECONCILIATION → human/provider-specific
+reconciliation → explicit final decision
+```
+
+`application/warmup-reconciliation-service.ts`'s `reconcileUnknownExecution`
+performs only the first arrow: it loads the intent, verifies tenant
+ownership, confirms the status is `SEND_UNKNOWN` (or already
+`REQUIRES_RECONCILIATION`, for idempotency), and moves it to
+`REQUIRES_RECONCILIATION` via `WarmupExecutionIntentRepository.markRequiresReconciliation`
+— an atomic, tenant-scoped Postgres `UPDATE ... WHERE status = 'SEND_UNKNOWN'`
+(migration 017 widens the same `status` CHECK constraint migration 016
+already widened once, again without editing 001-016). It never calls
+`WarmupSendProvider.sendWarmupMessage`, never sets a `SENT` status itself,
+and never retries — structurally incapable of the duplicate-send risk
+`SEND_UNKNOWN` exists to prevent, because it has no dependency on any
+provider or send port at all. Every request is recorded as a
+`WARMUP_RECONCILIATION_REQUESTED` audit event (ids/enums only, once per
+actual transition — a repeat idempotent call does not re-audit). Exposed
+administratively at `POST /:id/warmup/executions/:intentId/reconcile`,
+authenticated the same way every other route in this service is (there is
+no separate admin credential tier yet). Resolving `REQUIRES_RECONCILIATION`
+to a final `SENT`/`FAILED` — actually checking the mailbox's sent history —
+remains a manual, un-tooled operational step.
 
 ### Warmup Profile management API (Stage 9)
 
@@ -196,14 +227,15 @@ from `startWarmup`/`stopWarmup`).
 PostgreSQL, hand-written SQL migrations run via a small migration runner (no
 ORM, no SQLite). Every tenant-scoped table carries `tenant_id` with a foreign
 key and index; all queries touching tenant data enforce tenant isolation at
-the repository layer. Implemented so far (migrations 001-016): `tenants`,
+the repository layer. Implemented so far (migrations 001-017): `tenants`,
 `mailboxes`, `provider_accounts`, `api_credentials`, `audit_events`,
 `provider_credentials`, `connection_attempts`, `domain_intelligence`,
 `mailbox_signals`, `mailbox_assessments`, `warmup_profiles`,
 `warmup_sessions`, `warmup_decisions`, `warmup_execution_intents` (migration
-016 widens its `status` CHECK constraint to add `SEND_UNKNOWN` — see the
-idempotency section above — without editing migration 015 itself). Still
-planned for later stages: `conversations`, `conversation_messages`,
+016 widened its `status` CHECK constraint to add `SEND_UNKNOWN`, migration
+017 widened it again to add `REQUIRES_RECONCILIATION` — see the idempotency
+and reconciliation sections above — without editing migrations 001-016).
+Still planned for later stages: `conversations`, `conversation_messages`,
 `delivery_events`, `warmup_metrics`.
 
 ## Workers
@@ -227,6 +259,15 @@ faking success. `sendMessage` is real on Gmail/Microsoft 365 (Stage 9) and
 absent on SMTP/IMAP — optional on the interface, the same pattern `oauth`
 already used, so a provider without a safe implementation is never forced
 to fake one.
+
+**Live-send certification** (hardening pass): the only place this codebase
+is permitted to send a real email outside a test's mocked `fetch` is
+`src/cli/certify-provider-send.ts`, a standalone, manually-run script gated
+behind an explicit `ALLOW_LIVE_PROVIDER_CERTIFICATION=true` opt-in and
+operator-supplied tenant/mailbox/recipient — never wired into
+`composition/build-services.ts`, never reachable from an HTTP route or the
+execution worker, never run by any test suite or CI job. See
+`docs/PROVIDER_CERTIFICATION_RUNBOOK.md`.
 
 ## Security
 

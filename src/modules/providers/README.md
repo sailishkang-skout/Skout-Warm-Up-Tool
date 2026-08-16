@@ -64,6 +64,13 @@ provider — never credentials) and the `ProviderCredentialStore` boundary
   turns out to be dead. Originally private to `mailbox/application/mailbox-service.ts`
   (Stage 6); extracted in Stage 9 so `warmup`'s real send path reuses the
   exact same logic rather than a second implementation.
+- `application/provider-certification.ts` (hardening pass) — the only
+  authorized live-send path in this codebase, reusing this exact
+  `ProviderRegistry`/`resolveFreshCredential`/`ProviderAdapter.sendMessage`
+  chain against a real, already-connected account. Deliberately not part
+  of `AppServices` and not reachable from any route or worker — its only
+  caller is the manually-run `src/cli/certify-provider-send.ts` (see
+  `docs/PROVIDER_CERTIFICATION_RUNBOOK.md`).
 
 **Provider type naming**: `GMAIL`/`MICROSOFT365`/`SMTP_IMAP` (not the Stage 5
 spec's suggested `GOOGLE`/`MICROSOFT_365`) — kept from Stage 3 since renaming

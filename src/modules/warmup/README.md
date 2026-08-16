@@ -93,6 +93,10 @@ concrete provider adapter.
   **this only prevents Skout's own system from double-creating an intent
   for the same slot. It says nothing about whether the *provider* actually
   received a duplicate send.**
+- `application/warmup-reconciliation-service.ts` + `api/warmup-reconciliation-routes.ts`
+  (hardening pass) — the narrow, provider-agnostic `SEND_UNKNOWN` →
+  `REQUIRES_RECONCILIATION` foundation described below. Never imports a
+  `ProviderAdapter` and never depends on `WarmupSendProvider`.
 
 **Idempotency and the `SEND_UNKNOWN` limitation (read before touching the
 worker or either adapter)**: neither Gmail's `messages.send` nor Microsoft
@@ -104,11 +108,33 @@ both carry a `SEND_UNKNOWN` value for exactly this case — the execution
 worker records it and stops: `claimNext` only ever selects `PENDING` rows,
 so a `SEND_UNKNOWN` intent is never automatically retried or reclaimed. It
 requires manual reconciliation (checking the mailbox's actual sent
-history) before anyone decides what really happened. **There is no
-reconciliation tooling built yet** — a `SEND_UNKNOWN` intent today just
-sits there, visible via direct inspection of `warmup_execution_intents`.
+history) before anyone decides what really happened.
 Do not "fix" this by making `SEND_UNKNOWN` retryable; that would
 reintroduce the duplicate-send risk this design exists to prevent.
+
+**Reconciliation foundation (hardening pass)**:
+`application/warmup-reconciliation-service.ts`'s `reconcileUnknownExecution`
+is the minimum safe foundation for getting a `SEND_UNKNOWN` intent in front
+of a human, not a full reconciliation system:
+
+```
+SEND_UNKNOWN → REQUIRES_RECONCILIATION → human/provider-specific
+reconciliation → explicit final decision
+```
+
+It only performs the first arrow — tenant-scoped, idempotent (a repeat
+call returns the same result rather than erroring or re-auditing), and
+provider-agnostic (it never imports a `ProviderAdapter` and never calls
+`WarmupSendProvider.sendWarmupMessage`, so it structurally cannot resend).
+`REQUIRES_RECONCILIATION` is exactly as terminal and non-retryable as
+`SEND_UNKNOWN` itself — `claimNext` still only selects `PENDING` rows.
+Exposed at `POST /:id/warmup/executions/:intentId/reconcile`
+(`api/warmup-reconciliation-routes.ts`) — administrative/internal, behind
+the same tenant authentication as every other route in this service (there
+is no separate admin credential tier yet). **Resolving a
+`REQUIRES_RECONCILIATION` intent to a final `SENT`/`FAILED` — actually
+checking the mailbox's sent history and deciding what really happened —
+is still a human/operational process with no tooling built for it yet.**
 
 **No artificial engagement**: nothing in this module fabricates opens,
 clicks, replies, conversations, or reputation signals. The generated

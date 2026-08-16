@@ -32,6 +32,7 @@ export const AUDIT_EVENT_TYPES = [
   "WARMUP_INTENT_CLAIMED",
   "WARMUP_EXECUTION_FAILED",
   "WARMUP_EXECUTION_UNKNOWN",
+  "WARMUP_RECONCILIATION_REQUESTED",
 ] as const;
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
 

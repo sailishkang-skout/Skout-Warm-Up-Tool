@@ -15,6 +15,7 @@
     "migrate:status": "tsx src/cli/migrate.ts status",
     "migrate:validate": "tsx src/cli/migrate.ts validate",
     "bootstrap:tenant": "tsx src/cli/bootstrap-tenant.ts",
+    "certify:provider-send": "tsx src/cli/certify-provider-send.ts",
     "db:up": "docker compose up -d postgres redis",
     "db:down": "docker compose down"
   },

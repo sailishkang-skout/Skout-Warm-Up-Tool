@@ -61,4 +61,15 @@ export interface WarmupExecutionIntentRepository {
     leaseOwner: string,
     input: RecordExecutionResultInput,
   ): Promise<WarmupExecutionIntent>;
+  /**
+   * `SEND_UNKNOWN` → `REQUIRES_RECONCILIATION` (hardening spec Gap A) — not
+   * lease-gated like `recordResult`, since reconciliation is requested by
+   * an operator/API call, not a worker holding a claim. Idempotent by
+   * design: calling this again on an intent already `REQUIRES_RECONCILIATION`
+   * returns that same row unchanged rather than erroring, so a duplicate
+   * reconciliation request is always safe. Throws `ConflictError` if the
+   * intent exists but is in neither status (e.g. already `SENT`/`FAILED` —
+   * reconciliation only ever applies to an unconfirmed send).
+   */
+  markRequiresReconciliation(tenantId: TenantId, intentId: WarmupExecutionIntentId): Promise<WarmupExecutionIntent>;
 }

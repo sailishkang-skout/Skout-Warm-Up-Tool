@@ -174,4 +174,36 @@ export class PostgresWarmupExecutionIntentRepository implements WarmupExecutionI
     }
     return mapRow(rows[0]);
   }
+
+  async markRequiresReconciliation(tenantId: TenantId, intentId: WarmupExecutionIntentId): Promise<WarmupExecutionIntent> {
+    // Idempotent transition: only actually moves SEND_UNKNOWN rows, but a
+    // second call on an already-REQUIRES_RECONCILIATION row is not an
+    // error — it just re-reads the current (unchanged) row below instead
+    // of updating anything a second time.
+    const rows = await this.db.query<WarmupExecutionIntentRow>(
+      `UPDATE warmup_execution_intents
+       SET status = 'REQUIRES_RECONCILIATION'
+       WHERE tenant_id = $1 AND id = $2 AND status = 'SEND_UNKNOWN'
+       RETURNING ${SELECT_COLUMNS}`,
+      [tenantId, intentId],
+    );
+    if (rows[0]) {
+      return mapRow(rows[0]);
+    }
+
+    const existing = await this.db.query<WarmupExecutionIntentRow>(
+      `SELECT ${SELECT_COLUMNS} FROM warmup_execution_intents WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, intentId],
+    );
+    const current = existing[0];
+    if (!current) {
+      throw new ConflictError("Execution intent does not exist");
+    }
+    if (current.status !== "REQUIRES_RECONCILIATION") {
+      throw new ConflictError(
+        `Execution intent is not eligible for reconciliation (status is ${current.status}, expected SEND_UNKNOWN or REQUIRES_RECONCILIATION)`,
+      );
+    }
+    return mapRow(current);
+  }
 }
