@@ -79,7 +79,9 @@ describe("PostgresMailboxRepository", () => {
     expect(mailbox.tenantId).toBe(tenant.id);
     expect(mailbox.emailAddress).toBe("Warmup.User@Example.com");
     expect(mailbox.emailAddressCanonical).toBe("warmup.user@example.com");
-    expect(mailbox.status).toBe("NEW");
+    // Default status was "NEW" under Stage 3's original mega-lifecycle;
+    // Stage 5 replaced it with a connection-only lifecycle defaulting to "PENDING".
+    expect(mailbox.status).toBe("PENDING");
   });
 
   it("lists mailboxes by tenant, and enforces tenant isolation on findById", async () => {

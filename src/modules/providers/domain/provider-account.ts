@@ -11,6 +11,17 @@ export type ProviderAccountStatus = (typeof PROVIDER_ACCOUNT_STATUSES)[number];
  * identifier (e.g. a Google subject id), never a secret. Encrypted
  * credential storage is a later stage's concern with its own table and its
  * own access boundary, not this one.
+ *
+ * `status` here is this provider connection's own state — deliberately a
+ * separate concept from `Mailbox.status` (which tracks the mailbox's
+ * connection lifecycle from the application's point of view). The two are
+ * related but not identical: a mailbox can be operationally `enabled` while
+ * its provider account sits at `ERROR`.
+ *
+ * `metadata` is for safe, non-secret, provider-supplied information only
+ * (e.g. a resolved display name) — never credentials, tokens, or anything
+ * that would need redaction. `lastError` is a safe, curated message, never
+ * a raw provider/OAuth exception.
  */
 export interface ProviderAccount {
   readonly id: ProviderAccountId;
@@ -19,6 +30,9 @@ export interface ProviderAccount {
   readonly provider: MailboxProviderType;
   readonly status: ProviderAccountStatus;
   readonly externalAccountRef?: string;
+  readonly metadata: Readonly<Record<string, unknown>>;
+  readonly lastCheckedAt?: Date;
+  readonly lastError?: string;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }

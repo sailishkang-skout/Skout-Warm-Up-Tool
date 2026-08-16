@@ -11,12 +11,14 @@ interface MailboxRow {
   email_address_canonical: string;
   provider: MailboxProviderType;
   status: MailboxStatus;
+  enabled: boolean;
+  display_name: string | null;
   created_at: Date;
   updated_at: Date;
 }
 
 const SELECT_COLUMNS =
-  "id, tenant_id, email_address, email_address_canonical, provider, status, created_at, updated_at";
+  "id, tenant_id, email_address, email_address_canonical, provider, status, enabled, display_name, created_at, updated_at";
 
 function mapRow(row: MailboxRow): Mailbox {
   return {
@@ -26,6 +28,8 @@ function mapRow(row: MailboxRow): Mailbox {
     emailAddressCanonical: row.email_address_canonical,
     provider: row.provider,
     status: row.status,
+    enabled: row.enabled,
+    ...(row.display_name !== null ? { displayName: row.display_name } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -37,10 +41,17 @@ export class PostgresMailboxRepository implements MailboxRepository {
   async create(input: CreateMailboxInput): Promise<Mailbox> {
     const canonical = canonicalizeEmailAddress(input.emailAddress);
     const rows = await this.db.query<MailboxRow>(
-      `INSERT INTO mailboxes (tenant_id, email_address, email_address_canonical, provider, status)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO mailboxes (tenant_id, email_address, email_address_canonical, provider, status, display_name)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING ${SELECT_COLUMNS}`,
-      [input.tenantId, input.emailAddress, canonical, input.provider, input.status ?? "NEW"],
+      [
+        input.tenantId,
+        input.emailAddress,
+        canonical,
+        input.provider,
+        input.status ?? "PENDING",
+        input.displayName ?? null,
+      ],
     );
     return mapRow(expectOne(rows, "mailboxes insert"));
   }
@@ -59,5 +70,21 @@ export class PostgresMailboxRepository implements MailboxRepository {
       [tenantId],
     );
     return rows.map(mapRow);
+  }
+
+  async updateStatus(tenantId: TenantId, id: MailboxId, status: MailboxStatus): Promise<Mailbox | undefined> {
+    const rows = await this.db.query<MailboxRow>(
+      `UPDATE mailboxes SET status = $3 WHERE tenant_id = $1 AND id = $2 RETURNING ${SELECT_COLUMNS}`,
+      [tenantId, id, status],
+    );
+    return rows[0] ? mapRow(rows[0]) : undefined;
+  }
+
+  async updateEnabled(tenantId: TenantId, id: MailboxId, enabled: boolean): Promise<Mailbox | undefined> {
+    const rows = await this.db.query<MailboxRow>(
+      `UPDATE mailboxes SET enabled = $3 WHERE tenant_id = $1 AND id = $2 RETURNING ${SELECT_COLUMNS}`,
+      [tenantId, id, enabled],
+    );
+    return rows[0] ? mapRow(rows[0]) : undefined;
   }
 }

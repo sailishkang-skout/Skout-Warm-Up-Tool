@@ -19,6 +19,7 @@ const ALL_MIGRATION_FILENAMES = [
   "003_create_provider_accounts.sql",
   "004_create_api_credentials.sql",
   "005_create_audit_events.sql",
+  "006_mailbox_lifecycle_and_provider_metadata.sql",
 ];
 
 let handle: TestDatabaseHandle;
@@ -78,7 +79,7 @@ describe("getMigrationStatus", () => {
   it("reports every migration as pending against an empty schema", async () => {
     const status = await getMigrationStatus(handle.pool);
     expect(status.every((entry) => !entry.applied)).toBe(true);
-    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3, 4, 5]);
+    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it("reports applied migrations with an appliedAt timestamp after running them", async () => {

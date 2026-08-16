@@ -1,19 +1,30 @@
 # Mailbox
 
-**Responsibility**: owns the `Mailbox` aggregate and its onboarding lifecycle
-state machine (`NEW → CONNECTING → CONNECTED → VALIDATING → ASSESSED →
-WARMUP_INITIALIZED → WARMING → HEALTHY → OUTBOUND_READY → MONITORING`, plus the
-risk states `AT_RISK`, `RECOVERY`, `PAUSED`, `FAILED`, `DISCONNECTED`). Also owns
-encrypted credential *references* for connected mailboxes (never plaintext
-credentials — see `shared/` encryption abstraction, consumed here).
+**Responsibility**: owns the `Mailbox` aggregate and its connection lifecycle
+state machine (`PENDING → CONNECTING → CONNECTED → DISCONNECTED`, with `ERROR`
+reachable from `CONNECTING`/`CONNECTED` and able to retry back to
+`CONNECTING`). `enabled` is a separate boolean, not a lifecycle state — a
+mailbox can be enabled but `DISCONNECTED`, or disabled but still `CONNECTED`;
+see `domain/mailbox-lifecycle.ts` for the full transition graph and
+`domain/mailbox.ts` for why warmup-progress/risk states (WARMING, HEALTHY,
+AT_RISK, ...) were deliberately dropped from this enum — they belong to a
+future warmup_profile, not to whether the mailbox is connected.
+
+Also owns encrypted credential *references* for connected mailboxes (never
+plaintext credentials — see the `providers` module's `ProviderCredentialStore`
+boundary, consumed here via `MailboxService`).
 
 **Boundary**:
-- All lifecycle transitions go through one centralized state-transition function
-  in this module's `domain/` layer. No other module — warmup, scheduling,
-  workers — mutates mailbox status directly; they request a transition and this
-  module validates/applies it.
-- Depends on `providers` for the adapter interface (connect/validate) but never
-  on a specific provider implementation directly.
+- All lifecycle transitions go through `mailbox-lifecycle.ts`'s
+  `assertValidMailboxTransition` — `MailboxService` requests a transition, it
+  never assigns `status` directly, and no other module mutates it at all.
+- Depends on `providers` for the `ProviderAdapter`/`ProviderRegistry`/
+  `ProviderCredentialStore` interfaces, never on a specific adapter
+  implementation directly.
 - Depends on `tenancy` for tenant scoping only.
+- `MailboxService.createMailbox` creates the mailbox and its `ProviderAccount`
+  atomically (one DB transaction) — every mailbox has exactly one provider
+  account by construction, never as an eventually-consistent afterthought.
 
-**Target stage**: Stage 5 (domain + provider abstraction), Stage 6 (state machine).
+**Target stage**: Stage 3 (persistence foundation), Stage 5 (lifecycle,
+provider abstraction, `MailboxService`, `/api/v1/mailboxes`).

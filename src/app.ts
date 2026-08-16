@@ -3,11 +3,8 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import Fastify from "fastify";
 import { credentialsRoutes } from "./modules/auth/api/credentials-routes.js";
-import { createApiCredentialService } from "./modules/auth/application/api-credential-service.js";
-import { createAuthenticationService } from "./modules/auth/application/authentication-service.js";
-import { PostgresApiCredentialRepository } from "./modules/auth/infrastructure/postgres-api-credential-repository.js";
-import { createPostgresAuditEventRecorder } from "./modules/audit/infrastructure/postgres-audit-event-recorder.js";
-import { PostgresTenantRepository } from "./modules/tenancy/infrastructure/postgres-tenant-repository.js";
+import { mailboxRoutes } from "./modules/mailbox/api/mailbox-routes.js";
+import { buildServices } from "./composition/build-services.js";
 import { authenticationPlugin } from "./plugins/authentication.js";
 import { errorHandlerPlugin } from "./plugins/error-handler.js";
 import { requestContextPlugin } from "./plugins/request-context.js";
@@ -34,26 +31,13 @@ export async function buildApp(config: AppConfig, logger: Logger, database: Data
     origin: false,
   });
 
-  // Composition root: repositories -> application services -> plugins/routes.
-  // Kept here (not threaded through as more buildApp parameters) since
-  // everything they need — config, logger, database — is already in scope.
-  const tenantRepository = new PostgresTenantRepository(database);
-  const credentialRepository = new PostgresApiCredentialRepository(database);
-  const auditRecorder = createPostgresAuditEventRecorder(database, logger);
-  const authenticationService = createAuthenticationService({
-    credentialRepository,
-    tenantRepository,
-    auditRecorder,
-    pepper: config.security.apiKeyPepper,
-  });
-  const credentialService = createApiCredentialService({
-    repository: credentialRepository,
-    auditRecorder,
-    pepper: config.security.apiKeyPepper,
-  });
+  // Composition root builds every repository/service; app.ts only wires
+  // plugins/routes against the result (see src/composition/build-services.ts).
+  const services = buildServices(config, logger, database);
 
-  await app.register(authenticationPlugin(authenticationService));
-  await app.register(credentialsRoutes(credentialService), { prefix: "/api/v1/credentials" });
+  await app.register(authenticationPlugin(services.authenticationService));
+  await app.register(credentialsRoutes(services.credentialService), { prefix: "/api/v1/credentials" });
+  await app.register(mailboxRoutes(services.mailboxService), { prefix: "/api/v1/mailboxes" });
 
   // "process is alive" — deliberately has no dependency on the database or
   // any other downstream system. A liveness probe that can fail because a
