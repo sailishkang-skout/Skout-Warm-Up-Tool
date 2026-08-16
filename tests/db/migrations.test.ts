@@ -26,6 +26,9 @@ const ALL_MIGRATION_FILENAMES = [
   "010_create_mailbox_signals.sql",
   "011_create_mailbox_assessments.sql",
   "012_create_warmup_profiles.sql",
+  "013_create_warmup_sessions.sql",
+  "014_create_warmup_decisions.sql",
+  "015_create_warmup_execution_intents.sql",
 ];
 
 let handle: TestDatabaseHandle;
@@ -67,6 +70,9 @@ describe("runMigrations", () => {
     await expect(handle.database.query("SELECT * FROM mailbox_signals LIMIT 0")).resolves.toEqual([]);
     await expect(handle.database.query("SELECT * FROM mailbox_assessments LIMIT 0")).resolves.toEqual([]);
     await expect(handle.database.query("SELECT * FROM warmup_profiles LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM warmup_sessions LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM warmup_decisions LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM warmup_execution_intents LIMIT 0")).resolves.toEqual([]);
   });
 
   it("is idempotent — running it again applies nothing further", async () => {
@@ -91,7 +97,7 @@ describe("getMigrationStatus", () => {
   it("reports every migration as pending against an empty schema", async () => {
     const status = await getMigrationStatus(handle.pool);
     expect(status.every((entry) => !entry.applied)).toBe(true);
-    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
   });
 
   it("reports applied migrations with an appliedAt timestamp after running them", async () => {

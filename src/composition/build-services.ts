@@ -22,6 +22,13 @@ import { PostgresProviderAccountRepository } from "../modules/providers/infrastr
 import { createPostgresProviderCredentialStore } from "../modules/providers/infrastructure/postgres-provider-credential-store.js";
 import { SmtpImapAdapter } from "../modules/providers/infrastructure/smtp-imap/smtp-imap-adapter.js";
 import { PostgresTenantRepository } from "../modules/tenancy/infrastructure/postgres-tenant-repository.js";
+import { createExecutionWorker, type ExecutionWorker } from "../modules/warmup/application/execution-worker.js";
+import { createWarmupService, type WarmupService } from "../modules/warmup/application/warmup-service.js";
+import { createUnimplementedWarmupSendProvider } from "../modules/warmup/infrastructure/unimplemented-warmup-send-provider.js";
+import { PostgresWarmupDecisionRepository } from "../modules/warmup/infrastructure/postgres-warmup-decision-repository.js";
+import { PostgresWarmupExecutionIntentRepository } from "../modules/warmup/infrastructure/postgres-warmup-execution-intent-repository.js";
+import { PostgresWarmupProfileRepository } from "../modules/warmup/infrastructure/postgres-warmup-profile-repository.js";
+import { PostgresWarmupSessionRepository } from "../modules/warmup/infrastructure/postgres-warmup-session-repository.js";
 import { createEncryptionService } from "../shared/crypto/index.js";
 import type { AppConfig } from "../shared/config/index.js";
 import type { Database } from "../shared/db/index.js";
@@ -36,6 +43,8 @@ export interface AppServices {
   readonly oauthConnectionService: OAuthConnectionService;
   readonly domainIntelligenceService: DomainIntelligenceService;
   readonly mailboxAssessmentService: MailboxAssessmentService;
+  readonly warmupService: WarmupService;
+  readonly executionWorker: ExecutionWorker;
 }
 
 /**
@@ -122,6 +131,34 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
     assessmentRepository: new PostgresMailboxAssessmentRepository(database),
   });
 
+  const warmupProfileRepository = new PostgresWarmupProfileRepository(database);
+  const warmupSessionRepository = new PostgresWarmupSessionRepository(database);
+  const warmupDecisionRepository = new PostgresWarmupDecisionRepository(database);
+  const warmupExecutionIntentRepository = new PostgresWarmupExecutionIntentRepository(database);
+
+  const warmupService = createWarmupService({
+    mailboxService,
+    mailboxAssessmentService,
+    warmupProfileRepository,
+    sessionRepository: warmupSessionRepository,
+    decisionRepository: warmupDecisionRepository,
+    intentRepository: warmupExecutionIntentRepository,
+    auditRecorder,
+  });
+
+  // No real provider send capability exists yet this stage — every call
+  // reports an honest, non-retryable PERMANENT_FAILURE rather than
+  // fabricating success (see unimplemented-warmup-send-provider.ts).
+  const executionWorker = createExecutionWorker({
+    intentRepository: warmupExecutionIntentRepository,
+    sessionRepository: warmupSessionRepository,
+    warmupProfileRepository,
+    mailboxService,
+    mailboxAssessmentService,
+    sendProvider: createUnimplementedWarmupSendProvider(),
+    auditRecorder,
+  });
+
   return {
     authenticationService,
     credentialService,
@@ -130,5 +167,7 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
     oauthConnectionService,
     domainIntelligenceService,
     mailboxAssessmentService,
+    warmupService,
+    executionWorker,
   };
 }

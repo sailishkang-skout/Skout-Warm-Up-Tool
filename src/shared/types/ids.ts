@@ -27,6 +27,9 @@ export type PolicyDecisionId = Branded<string, "PolicyDecisionId">;
 export type AuditEventId = Branded<string, "AuditEventId">;
 export type RequestId = Branded<string, "RequestId">;
 export type CorrelationId = Branded<string, "CorrelationId">;
+export type WarmupSessionId = Branded<string, "WarmupSessionId">;
+export type WarmupDecisionId = Branded<string, "WarmupDecisionId">;
+export type WarmupExecutionIntentId = Branded<string, "WarmupExecutionIntentId">;
 
 function brander<Tag extends string>(): (value: string) => Branded<string, Tag> {
   return (value: string) => value as Branded<string, Tag>;
@@ -52,3 +55,6 @@ export const asPolicyDecisionId = brander<"PolicyDecisionId">();
 export const asAuditEventId = brander<"AuditEventId">();
 export const asRequestId = brander<"RequestId">();
 export const asCorrelationId = brander<"CorrelationId">();
+export const asWarmupSessionId = brander<"WarmupSessionId">();
+export const asWarmupDecisionId = brander<"WarmupDecisionId">();
+export const asWarmupExecutionIntentId = brander<"WarmupExecutionIntentId">();

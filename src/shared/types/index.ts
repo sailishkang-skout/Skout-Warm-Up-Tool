@@ -18,8 +18,11 @@ export type {
   RiskEventId,
   TenantId,
   UserId,
+  WarmupDecisionId,
+  WarmupExecutionIntentId,
   WarmupJobId,
   WarmupProfileId,
+  WarmupSessionId,
 } from "./ids.js";
 
 export {
@@ -41,8 +44,11 @@ export {
   asRiskEventId,
   asTenantId,
   asUserId,
+  asWarmupDecisionId,
+  asWarmupExecutionIntentId,
   asWarmupJobId,
   asWarmupProfileId,
+  asWarmupSessionId,
 } from "./ids.js";
 
 export type { RequestActor, RequestContext } from "./request-context.js";

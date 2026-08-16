@@ -125,4 +125,30 @@ describe("PostgresWarmupProfileRepository", () => {
     const repository = new PostgresWarmupProfileRepository(handle.database);
     await expect(repository.findByMailboxId(tenant.id, mailbox.id)).resolves.toBeUndefined();
   });
+
+  it("setActive flips the flag Stage 8's WarmupService uses to mark a profile in-use", async () => {
+    const { tenant, mailbox } = await createTenantAndMailbox();
+    const repository = new PostgresWarmupProfileRepository(handle.database);
+    await repository.create({
+      tenantId: tenant.id,
+      mailboxId: mailbox.id,
+      targetDailyVolume: 30,
+      startingDailyVolume: 5,
+      maximumDailyVolume: 50,
+      rampStrategy: "STANDARD",
+      riskTolerance: "MEDIUM",
+    });
+
+    const activated = await repository.setActive(tenant.id, mailbox.id, true);
+    expect(activated.active).toBe(true);
+
+    const deactivated = await repository.setActive(tenant.id, mailbox.id, false);
+    expect(deactivated.active).toBe(false);
+  });
+
+  it("setActive throws NotFoundError for a mailbox with no profile", async () => {
+    const { tenant, mailbox } = await createTenantAndMailbox();
+    const repository = new PostgresWarmupProfileRepository(handle.database);
+    await expect(repository.setActive(tenant.id, mailbox.id, true)).rejects.toThrow();
+  });
 });

@@ -1,4 +1,5 @@
 import { expectOne, type DatabaseClient } from "../../../shared/db/index.js";
+import { NotFoundError } from "../../../shared/errors/index.js";
 import { asMailboxId, asTenantId, asWarmupProfileId, type MailboxId, type TenantId } from "../../../shared/types/index.js";
 import type { CreateWarmupProfileInput, WarmupProfileRepository } from "../application/warmup-profile-repository.js";
 import type { RampStrategy, RiskTolerance, WarmupProfile } from "../domain/warmup-profile.js";
@@ -67,5 +68,16 @@ export class PostgresWarmupProfileRepository implements WarmupProfileRepository 
       [tenantId, mailboxId],
     );
     return rows[0] ? mapRow(rows[0]) : undefined;
+  }
+
+  async setActive(tenantId: TenantId, mailboxId: MailboxId, active: boolean): Promise<WarmupProfile> {
+    const rows = await this.db.query<WarmupProfileRow>(
+      `UPDATE warmup_profiles SET active = $3 WHERE tenant_id = $1 AND mailbox_id = $2 RETURNING ${SELECT_COLUMNS}`,
+      [tenantId, mailboxId, active],
+    );
+    if (!rows[0]) {
+      throw new NotFoundError("Warmup profile for mailbox", mailboxId);
+    }
+    return mapRow(rows[0]);
   }
 }
