@@ -1,9 +1,20 @@
 import type { MailboxHealthAssessment } from "../../health/domain/mailbox-health.js";
+import type { ReputationAssessment } from "../../reputation/domain/reputation-assessment.js";
 import type { RiskAssessment, RiskFactor, RiskLevel } from "../domain/risk-assessment.js";
 
 export interface RiskPolicyInput {
   readonly health: MailboxHealthAssessment;
   readonly domainAssessed: boolean;
+  /**
+   * Stage 10 spec section 10: "extend the existing RiskPolicy... add
+   * reputation-derived risk factors." Optional so every pre-Stage-10 caller
+   * (and every existing unit test) keeps working unchanged — omitting it
+   * simply means no reputation-derived factors are considered, never an
+   * error. `reputation` remains the sole authority for delivery-evidence
+   * reputation; this policy only ever *reads* its `factors`, never
+   * recomputes or second-guesses them.
+   */
+  readonly reputation?: ReputationAssessment;
 }
 
 /**
@@ -23,7 +34,41 @@ export const RISK_FACTOR_WEIGHTS = {
   MISSING_SPF: 15,
   DMARC_MISSING: 10,
   MAILBOX_DISABLED: 20,
+  /**
+   * Stage 10 spec section 10 — reputation-derived factors, calibrated
+   * deliberately conservatively: no single one of these alone reaches the
+   * CRITICAL threshold (70). "CRITICAL should require strong evidence"
+   * (section 10) — reaching CRITICAL from reputation alone requires
+   * multiple corroborating factors (e.g. a high bounce rate *and* a
+   * degrading trend), never one noisy signal.
+   * `HIGH_HARD_BOUNCE_RATE` is reserved but never triggered today —
+   * `reputation`'s normalized event taxonomy has no hard/soft bounce
+   * split yet (see reputation/application/reputation-policy.ts), so this
+   * codebase never fabricates that distinction.
+   */
+  HIGH_BOUNCE_RATE: 30,
+  HIGH_HARD_BOUNCE_RATE: 35,
+  HIGH_THROTTLE_RATE: 25,
+  HIGH_PROVIDER_REJECTION_RATE: 30,
+  HIGH_FAILURE_RATE: 30,
+  COMPLAINT_SIGNAL: 35,
+  DEGRADING_DELIVERY_TREND: 10,
+  DEGRADING_BOUNCE_TREND: 10,
+  DEGRADING_PROVIDER_TREND: 10,
 } as const;
+
+/** Reputation's own factor codes this policy recognizes and re-weights as risk factors — everything else on a `ReputationAssessment` is ignored here (Stage 10 spec section 10: risk only ever reads reputation's `factors`, never its raw window evidence). */
+const REPUTATION_RISK_FACTOR_CODES: ReadonlySet<string> = new Set([
+  "HIGH_BOUNCE_RATE",
+  "HIGH_HARD_BOUNCE_RATE",
+  "HIGH_THROTTLE_RATE",
+  "HIGH_PROVIDER_REJECTION_RATE",
+  "HIGH_FAILURE_RATE",
+  "COMPLAINT_SIGNAL",
+  "DEGRADING_DELIVERY_TREND",
+  "DEGRADING_BOUNCE_TREND",
+  "DEGRADING_PROVIDER_TREND",
+]);
 
 const RISK_LEVEL_THRESHOLDS: ReadonlyArray<{ readonly minScore: number; readonly level: RiskLevel }> = [
   { minScore: 70, level: "CRITICAL" },
@@ -79,12 +124,26 @@ export function evaluateRisk(input: RiskPolicyInput, assessedAt: Date): RiskAsse
     riskFactors.push(factor("MAILBOX_DISABLED", "The mailbox is administratively disabled.", "MEDIUM"));
   }
 
-  const allUnknown =
+  // Stage 10 spec section 10: only factors reputation itself already
+  // computed and gated behind its own evidence-window thresholds are
+  // re-weighted here — this policy never re-derives a rate or a trend from
+  // raw delivery events itself, it only reads reputation's conclusions.
+  if (input.reputation) {
+    for (const reputationFactor of input.reputation.factors) {
+      if (REPUTATION_RISK_FACTOR_CODES.has(reputationFactor.code)) {
+        riskFactors.push(factor(reputationFactor.code as keyof typeof RISK_FACTOR_WEIGHTS, reputationFactor.description, reputationFactor.severity));
+      }
+    }
+  }
+
+  const healthAllUnknown =
     health.connection === "UNKNOWN" &&
     health.authentication === "UNKNOWN" &&
     health.sending === "UNKNOWN" &&
     health.receiving === "UNKNOWN" &&
     !input.domainAssessed;
+  const reputationKnown = input.reputation !== undefined && input.reputation.status !== "UNKNOWN";
+  const allUnknown = healthAllUnknown && !reputationKnown;
 
   if (allUnknown) {
     return { riskLevel: "UNKNOWN", riskScore: 0, riskFactors: [], assessedAt };

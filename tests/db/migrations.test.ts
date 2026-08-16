@@ -31,6 +31,8 @@ const ALL_MIGRATION_FILENAMES = [
   "015_create_warmup_execution_intents.sql",
   "016_add_send_unknown_intent_status.sql",
   "017_add_requires_reconciliation_intent_status.sql",
+  "018_create_delivery_events.sql",
+  "019_create_reputation_assessments.sql",
 ];
 
 let handle: TestDatabaseHandle;
@@ -75,6 +77,8 @@ describe("runMigrations", () => {
     await expect(handle.database.query("SELECT * FROM warmup_sessions LIMIT 0")).resolves.toEqual([]);
     await expect(handle.database.query("SELECT * FROM warmup_decisions LIMIT 0")).resolves.toEqual([]);
     await expect(handle.database.query("SELECT * FROM warmup_execution_intents LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM delivery_events LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM reputation_assessments LIMIT 0")).resolves.toEqual([]);
   });
 
   it("is idempotent — running it again applies nothing further", async () => {
@@ -99,7 +103,7 @@ describe("getMigrationStatus", () => {
   it("reports every migration as pending against an empty schema", async () => {
     const status = await getMigrationStatus(handle.pool);
     expect(status.every((entry) => !entry.applied)).toBe(true);
-    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
+    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
   });
 
   it("reports applied migrations with an appliedAt timestamp after running them", async () => {

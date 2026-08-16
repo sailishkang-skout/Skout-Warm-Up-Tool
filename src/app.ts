@@ -3,9 +3,11 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import Fastify from "fastify";
 import { credentialsRoutes } from "./modules/auth/api/credentials-routes.js";
+import { deliveryEventRoutes } from "./modules/delivery-events/api/delivery-event-routes.js";
 import { mailboxAssessmentRoutes } from "./modules/health/api/mailbox-assessment-routes.js";
 import { mailboxRoutes } from "./modules/mailbox/api/mailbox-routes.js";
 import { oauthRoutes } from "./modules/oauth/api/oauth-routes.js";
+import { reputationRoutes } from "./modules/reputation/api/reputation-routes.js";
 import { warmupProfileRoutes } from "./modules/warmup/api/warmup-profile-routes.js";
 import { warmupReconciliationRoutes } from "./modules/warmup/api/warmup-reconciliation-routes.js";
 import { warmupRoutes } from "./modules/warmup/api/warmup-routes.js";
@@ -52,9 +54,15 @@ export async function buildApp(config: AppConfig, logger: Logger, database: Data
   // instead (single-use, tenant/mailbox/provider-bound OAuth state).
   await app.register(oauthRoutes(services.oauthConnectionService), { prefix: "/api/v1/oauth" });
   await app.register(mailboxAssessmentRoutes(services.mailboxAssessmentService), { prefix: "/api/v1/mailboxes" });
+  await app.register(reputationRoutes(services.reputationService), { prefix: "/api/v1/mailboxes" });
   await app.register(warmupRoutes(services.warmupService), { prefix: "/api/v1/mailboxes" });
   await app.register(warmupProfileRoutes(services.warmupProfileService), { prefix: "/api/v1/mailboxes" });
   await app.register(warmupReconciliationRoutes(services.warmupReconciliationService), { prefix: "/api/v1/mailboxes" });
+  // Stage 10 spec section 5/19: authenticated internal ingestion boundary
+  // (no real provider webhook signature verification exists yet — see
+  // delivery-events/README.md for the documented limitation and future
+  // path). Never registered without fastify.authenticate.
+  await app.register(deliveryEventRoutes(services.deliveryEventService), { prefix: "/api/v1/internal" });
 
   // "process is alive" — deliberately has no dependency on the database or
   // any other downstream system. A liveness probe that can fail because a

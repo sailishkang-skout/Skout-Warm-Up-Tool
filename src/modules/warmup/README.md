@@ -35,7 +35,19 @@ concrete provider adapter.
 - `application/ramp-policy.ts` (`calculateWarmupTarget`) — pure, bounded by
   `profile.maximumDailyVolume` and `capacity.maximumDailyVolume` on every
   path; risk level (adjusted by the profile's `riskTolerance`) and
-  eligibility gate progression, never a blind daily increase.
+  eligibility gate progression, never a blind daily increase. This is also
+  Stage 10's adaptive layer in its entirety: reputation feeds `risk` as an
+  extra factor source (see `risk/README.md`), and this function already
+  reacts to `risk.riskLevel` — no second, parallel "adaptive capacity"
+  policy was built, since one would only duplicate this one (Stage 10
+  spec section 16: "do not create a second decision engine"). Stage 10
+  did add one behavior fix here: recovering from a HIGH/CRITICAL-risk
+  reduction back to LOW risk now climbs by at most one ramp step per day
+  (`previousTarget + step`, capped at the day-based trajectory) instead of
+  snapping straight back to it — "recovery must also be gradual" (Stage 10
+  spec section 14). This only changes behavior when `previousTarget` sits
+  below the day-based trajectory (i.e. something reduced it); the ordinary
+  steady-state path is numerically identical to before.
 - `application/safety-gate.ts` (`evaluateSafetyGate`) — every mandatory
   precondition, evaluated together, including `providerCanSend` (from
   `ProviderCapabilities.canSend` — Stage 9). Called twice per send: once

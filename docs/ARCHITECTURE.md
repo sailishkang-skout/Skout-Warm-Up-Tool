@@ -45,11 +45,15 @@ src/
                               particular its SEND_UNKNOWN/idempotency limitation
     conversations/           Controlled mailbox-to-mailbox interactions
     scheduling/               BullMQ job creation, retry/backoff, distributed locks (not yet implemented)
-    delivery-events/         Delivery event ingestion/normalization
+    delivery-events/         Normalized delivery-event ingestion + idempotent persistence +
+                              rolling-window aggregation (Stage 10)
     health/                  Mailbox health assessment (6 dimensions) + the cross-module
                               orchestrator that assembles one AssessmentSnapshot per refresh
+                              (Stage 10: also computes reputation, checks staleness invalidation)
     risk/                    Risk engine — weighted score + level, computed from health output
-    reputation/              Provider/domain-level reputation signals
+                              (Stage 10: + optional reputation-derived factors)
+    reputation/              Mailbox-level, delivery-evidence reputation assessment (Stage 10);
+                              provider/domain-level signals remain future work — see reputation/README.md
     policy/                  Warmup eligibility decision + capacity recommendation, computed
                               from health + risk output
     audit/                   Append-only audit event log
@@ -222,21 +226,108 @@ session/decision/intent/lease state are never reachable through this API
 authority for those (Stage 8, extended by Stage 9's `setActive` calls
 from `startWarmup`/`stopWarmup`).
 
+### Adaptive warmup feedback loop (Stage 10)
+
+```
+Provider Send → Delivery Event → Normalized Event → Mailbox Reputation
+  → Risk factor → (existing) Risk Assessment → (existing) Ramp Policy
+  → (existing) Safety Gate → (existing) Warmup Execution Policy
+```
+
+The right-hand half of that chain is **entirely unmodified Stage 7/8
+code** — `application/ramp-policy.ts` already reacted to `risk.riskLevel`
+(CRITICAL → zero/pause, HIGH → reduce from the previous day, MEDIUM →
+half-speed progression, LOW → normal progression), so feeding it better
+risk input via `reputation` makes the whole system adaptive without a
+second, parallel "adaptive capacity" policy (Stage 10 spec section 16: "do
+not create a second decision engine"). The one genuine behavior change
+Stage 10 made to existing code is `ramp-policy.ts`'s LOW-risk branch: it no
+longer snaps straight back to the day-based trajectory when recovering
+from a previous reduction — see `warmup/README.md`'s ramp-policy entry.
+
+- **`delivery-events`** (new module) — `POST /api/v1/internal/delivery-events`
+  ingests one already-normalized `DeliveryEvent`
+  (`DELIVERED`/`BOUNCED`/`FAILED`/`THROTTLED`/`DEFERRED`/`REJECTED`/
+  `COMPLAINT`/`UNKNOWN`), idempotent by `dedupeKey` (`tenant + provider +
+  providerEventId`, or a documented fallback identity when no provider
+  event id exists — see that module's README). No real Gmail/Microsoft
+  webhook endpoint exists yet (no signature verification) — this
+  authenticated internal endpoint is the documented, deliberate fallback
+  Stage 10 spec section 5 allows, and the exact shape a future webhook
+  handler would normalize a provider payload into. Never manipulates
+  warmup volume directly; only persists evidence, marks the mailbox's
+  intelligence stale, and audits.
+- **`reputation`** (module scope widened this stage — see its README's
+  scope note) — `application/reputation-policy.ts`'s `evaluateReputation`
+  is a pure function over three rolling windows (last 24h / last 7d /
+  lifetime, computed by `delivery-events`' aggregation query) plus an
+  internal prior-24h window used only for trend detection. Produces a
+  `ReputationStatus` (`EXCELLENT`/`HEALTHY`/`DEGRADED`/`POOR`/`CRITICAL`/
+  `UNKNOWN`), per-metric `TrendDirection`s, and explainable `factors` —
+  every rate is `"UNKNOWN"`, never a fabricated `0`, below a minimum
+  sample size, and a genuinely triggered factor (e.g. a real complaint,
+  gated by absolute count) always takes priority over that "not enough
+  evidence" gate. Persisted append-only
+  (`migrations/019_create_reputation_assessments.sql`); `GET
+  /:id/reputation` / `GET /:id/reputation/history` expose it read-only.
+  `reputation` never decides risk or volume itself — `risk` reads its
+  `factors`, nothing else.
+- **`risk`** (extended) — `RiskPolicyInput.reputation` is optional; when
+  present, `evaluateRisk` re-weights `reputation`'s own already-gated
+  factors into `RISK_FACTOR_WEIGHTS`, calibrated so no single reputation
+  factor alone reaches the `CRITICAL` threshold (Stage 10 spec section 10:
+  "CRITICAL should require strong evidence" — reaching it from reputation
+  alone requires multiple corroborating factors). Omitting `reputation`
+  behaves exactly as every pre-Stage-10 caller already expects.
+- **`health`** (extended) — `MailboxAssessmentService.performRefresh` now
+  also calls `reputation`'s `assessReputation` and threads the result into
+  `evaluateRisk`. `application/assessment-invalidation-store.ts` (Redis-
+  backed, `infrastructure/redis-assessment-invalidation-store.ts`) is the
+  lightweight "reassessment-needed marker" Stage 10 spec section 17 asks
+  for: `delivery-events` marks a mailbox stale after a genuinely new event
+  (never a duplicate), and `getAssessment` checks that flag alongside the
+  existing time-based freshness window — either being stale triggers a
+  recompute, so a new delivery event can force fresh evidence into the
+  very next warmup decision without waiting out the rest of the freshness
+  window, and without a synchronous full reassessment on every single
+  ingested event. `delivery-events` depends on the narrow
+  `AssessmentInvalidationStore` port directly (not the full
+  `MailboxAssessmentService`), which is what keeps `delivery-events →
+  health → reputation → delivery-events` from being an actual module
+  dependency cycle in the code (see `health/README.md`).
+- **Audit**: `DELIVERY_EVENT_RECEIVED`, `DELIVERY_EVENT_DUPLICATE`,
+  `REPUTATION_ASSESSMENT_CREATED` (every run), `REPUTATION_DEGRADED` /
+  `REPUTATION_RECOVERED` (only on the actual status-tier transition, never
+  re-fired on every run) — ids/enums/safe numeric summaries only, same
+  fail-open recording every other audit event already uses.
+- **Deliberately not built this stage**: real provider webhook
+  authentication (documented fallback above); a hard/soft bounce split
+  (`hardBounceRate` is always `"UNKNOWN"` — the event taxonomy has no such
+  distinction to report honestly); a second "adaptive capacity" policy
+  separate from `ramp-policy.ts`; changes to `policy/application/capacity-policy.ts`
+  (still a pure function of eligibility alone — see `policy/README.md`);
+  `provider_signals`/provider-level reputation (still real future work,
+  now layered onto the same `reputation` module rather than a separate one).
+
 ## Database
 
 PostgreSQL, hand-written SQL migrations run via a small migration runner (no
 ORM, no SQLite). Every tenant-scoped table carries `tenant_id` with a foreign
 key and index; all queries touching tenant data enforce tenant isolation at
-the repository layer. Implemented so far (migrations 001-017): `tenants`,
+the repository layer. Implemented so far (migrations 001-019): `tenants`,
 `mailboxes`, `provider_accounts`, `api_credentials`, `audit_events`,
 `provider_credentials`, `connection_attempts`, `domain_intelligence`,
 `mailbox_signals`, `mailbox_assessments`, `warmup_profiles`,
 `warmup_sessions`, `warmup_decisions`, `warmup_execution_intents` (migration
 016 widened its `status` CHECK constraint to add `SEND_UNKNOWN`, migration
 017 widened it again to add `REQUIRES_RECONCILIATION` — see the idempotency
-and reconciliation sections above — without editing migrations 001-016).
-Still planned for later stages: `conversations`, `conversation_messages`,
-`delivery_events`, `warmup_metrics`.
+and reconciliation sections above — without editing migrations 001-016),
+`delivery_events` (migration 018 — append-only, `dedupe_key` the sole
+idempotency guard, indexed on `(mailbox_id, observed_at DESC)` for the
+rolling-window aggregation query), `reputation_assessments` (migration
+019 — append-only history, indexed the same way). Still planned for later
+stages: `conversations`, `conversation_messages`, `warmup_metrics`,
+`provider_signals`.
 
 ## Workers
 
@@ -296,10 +387,10 @@ are never exposed to callers.
 6. Mailbox onboarding/state machine
 7. Warmup profile and mailbox intelligence pipeline (health/risk/policy/domain-intelligence)
 8. Warmup engine foundation — state machine, decision engine, execution intents, worker (execution used a non-sending fallback provider)
-9. Real provider send boundary (Gmail/Microsoft 365 sendMessage, SEND_UNKNOWN handling) and Warmup Profile management API — **this stage**; conversation engine and mailbox-to-mailbox partner selection remain future work
-10. Delivery/event processing
-11. Health/risk/intelligence engines
-12. Policy/readiness engine
+9. Real provider send boundary (Gmail/Microsoft 365 sendMessage, SEND_UNKNOWN handling), Warmup Profile management API, and (hardening pass) unknown-send reconciliation foundation + provider send certification path
+10. Delivery events, mailbox-level reputation intelligence, and the adaptive warmup feedback loop — **this stage**; real provider webhook authentication, hard/soft bounce distinction, and provider/domain-level reputation signals remain future work
+11. Conversation engine, mailbox-to-mailbox partner selection
+12. Policy/readiness engine refinements
 13. REST API/OpenAPI
 14. Security hardening
 15. Observability

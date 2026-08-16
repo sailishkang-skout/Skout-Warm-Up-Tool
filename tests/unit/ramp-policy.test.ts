@@ -147,4 +147,49 @@ describe("calculateWarmupTarget", () => {
     const target = calculateWarmupTarget(input());
     expect(target.reasons.length).toBeGreaterThan(0);
   });
+
+  describe("gradual recovery (Stage 10 spec section 14)", () => {
+    it("does not immediately restore the full day-based trajectory after risk drops back to LOW", () => {
+      // Day 10 under STANDARD (+2/day, starting 5) has a day-based
+      // trajectory of 5 + 9*2 = 23. If the mailbox was suppressed down to
+      // a previousTarget of 4 by an earlier risk event, recovering to LOW
+      // risk must not jump straight back to 23.
+      const target = calculateWarmupTarget(input({ currentDay: 10, previousTarget: 4, risk: risk("LOW") }));
+      expect(target.recommended).toBeLessThan(23);
+      expect(target.recommended).toBeGreaterThan(4);
+    });
+
+    it("recovery increases by at most one ramp step per day", () => {
+      const target = calculateWarmupTarget(input({ currentDay: 10, previousTarget: 4, risk: risk("LOW"), profile: profile({ rampStrategy: "STANDARD" }) }));
+      // STANDARD step is +2/day.
+      expect(target.recommended).toBe(6);
+    });
+
+    it("multi-day recovery climbs step by step, never in one jump, until it rejoins the day-based trajectory", () => {
+      const day10 = calculateWarmupTarget(input({ currentDay: 10, previousTarget: 4, risk: risk("LOW") }));
+      const day11 = calculateWarmupTarget(input({ currentDay: 11, previousTarget: day10.recommended, risk: risk("LOW") }));
+      const day12 = calculateWarmupTarget(input({ currentDay: 12, previousTarget: day11.recommended, risk: risk("LOW") }));
+      expect(day11.recommended).toBeGreaterThan(day10.recommended);
+      expect(day12.recommended).toBeGreaterThan(day11.recommended);
+      expect(day11.recommended - day10.recommended).toBeLessThanOrEqual(2);
+      expect(day12.recommended - day11.recommended).toBeLessThanOrEqual(2);
+    });
+
+    it("the ordinary, never-interrupted steady-state trajectory is completely unchanged by the recovery fix", () => {
+      // previousTarget chained from the prior day's own computed value —
+      // exactly the existing "progresses upward day over day" scenario.
+      const day1 = calculateWarmupTarget(input({ currentDay: 1 }));
+      const day2 = calculateWarmupTarget(input({ currentDay: 2, previousTarget: day1.recommended }));
+      const day3 = calculateWarmupTarget(input({ currentDay: 3, previousTarget: day2.recommended }));
+      expect(day1.recommended).toBe(5);
+      expect(day2.recommended).toBe(7);
+      expect(day3.recommended).toBe(9);
+    });
+
+    it("recovery never exceeds the day-based trajectory even if previousTarget is very far behind", () => {
+      const target = calculateWarmupTarget(input({ currentDay: 3, previousTarget: 0, risk: risk("LOW") }));
+      const unadjustedDayProgression = 5 + (3 - 1) * 2;
+      expect(target.recommended).toBeLessThanOrEqual(unadjustedDayProgression);
+    });
+  });
 });

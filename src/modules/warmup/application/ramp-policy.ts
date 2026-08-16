@@ -116,6 +116,17 @@ export function calculateWarmupTarget(input: CalculateWarmupTargetInput): DailyW
     const base = previousTarget ?? profile.startingDailyVolume;
     recommended = Math.min(dayProgression, base + Math.ceil(step / 2));
     reasons.push("Risk level is MEDIUM — progressing at half the normal ramp rate.");
+  } else if (previousTarget !== undefined && previousTarget < dayProgression) {
+    // LOW risk, but recovering from a previously reduced target (Stage 10
+    // spec section 14: "recovery must also be gradual... do not
+    // immediately restore volume after one healthy event"). Only engages
+    // when yesterday's actual target sat below the day-based trajectory —
+    // i.e. something reduced it — so the ordinary, never-interrupted
+    // steady-state path below is completely unchanged (previousTarget is
+    // always exactly one step behind dayProgression there, and this
+    // branch produces the identical number in that case).
+    recommended = Math.min(dayProgression, previousTarget + step);
+    reasons.push(`Recovering gradually from a previously reduced volume (${previousTarget}) rather than jumping directly to the day-based target of ${dayProgression}.`);
   } else {
     recommended = dayProgression;
     reasons.push(`Normal ${profile.rampStrategy.toLowerCase()} ramp progression for warmup day ${currentDay}.`);

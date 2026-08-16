@@ -2,9 +2,11 @@ import type { DomainIntelligenceService } from "../../domain-intelligence/applic
 import type { MailboxService } from "../../mailbox/application/mailbox-service.js";
 import { recommendCapacity } from "../../policy/application/capacity-policy.js";
 import { evaluateEligibility } from "../../policy/application/warmup-eligibility-policy.js";
+import type { ReputationService } from "../../reputation/application/reputation-service.js";
 import { evaluateRisk } from "../../risk/application/risk-policy.js";
 import { RateLimitError } from "../../../shared/errors/index.js";
 import type { MailboxId, TenantId } from "../../../shared/types/index.js";
+import type { AssessmentInvalidationStore } from "./assessment-invalidation-store.js";
 import { computeFreshness } from "../domain/freshness.js";
 import type { AssessmentSnapshot } from "../domain/assessment-snapshot.js";
 import { evaluateHealth } from "./mailbox-health-evaluator.js";
@@ -35,6 +37,8 @@ export interface CreateMailboxAssessmentServiceDeps {
   readonly domainIntelligenceService: DomainIntelligenceService;
   readonly signalRepository: MailboxSignalRepository;
   readonly assessmentRepository: MailboxAssessmentRepository;
+  readonly reputationService: ReputationService;
+  readonly invalidationStore: AssessmentInvalidationStore;
 }
 
 // A forced refresh (POST /intelligence/refresh) is the one path a caller
@@ -53,12 +57,19 @@ function extractDomain(emailAddressCanonical: string): string {
 }
 
 export function createMailboxAssessmentService(deps: CreateMailboxAssessmentServiceDeps): MailboxAssessmentService {
-  const { mailboxService, domainIntelligenceService, signalRepository, assessmentRepository } = deps;
+  const { mailboxService, domainIntelligenceService, signalRepository, assessmentRepository, reputationService, invalidationStore } = deps;
 
   async function performRefresh(tenantId: TenantId, mailboxId: MailboxId): Promise<AssessmentSnapshot> {
     const mailbox = await mailboxService.getMailbox(tenantId, mailboxId);
     const connectionHealth = await mailboxService.getConnectionHealth(tenantId, mailboxId);
-    const domainAssessment = await domainIntelligenceService.getAssessment(extractDomain(mailbox.emailAddressCanonical));
+    const [domainAssessment, reputation] = await Promise.all([
+      domainIntelligenceService.getAssessment(extractDomain(mailbox.emailAddressCanonical)),
+      // Stage 10: computed as part of the same refresh cycle every other
+      // signal source already goes through, never a separate synchronous
+      // path triggered per delivery event (see delivery-events' own
+      // ingestion service, which only marks this refresh stale).
+      reputationService.assessReputation(tenantId, mailboxId),
+    ]);
 
     const now = new Date();
     const signals = collectSignals({
@@ -70,15 +81,20 @@ export function createMailboxAssessmentService(deps: CreateMailboxAssessmentServ
     await signalRepository.record(tenantId, mailboxId, signals);
 
     const health = evaluateHealth(signals, mailbox.enabled, now);
-    const risk = evaluateRisk({ health, domainAssessed: true }, now);
+    const risk = evaluateRisk({ health, domainAssessed: true, reputation }, now);
     const eligibility = evaluateEligibility({ health, risk, mailboxEnabled: mailbox.enabled }, now);
     const capacity = recommendCapacity(eligibility.decision, now);
 
-    return assessmentRepository.create({
+    const snapshot = await assessmentRepository.create({
       tenantId,
       mailboxId,
       snapshot: { health, risk, eligibility, capacity, domainAssessment, assessedAt: now },
     });
+    // Cleared only after a full, successful refresh — a failed refresh
+    // (thrown mid-way) leaves the marker set, so the next read still
+    // knows to retry rather than silently serving stale evidence.
+    await invalidationStore.clear(tenantId, mailboxId);
+    return snapshot;
   }
 
   return {
@@ -86,7 +102,12 @@ export function createMailboxAssessmentService(deps: CreateMailboxAssessmentServ
       const latest = await assessmentRepository.findLatest(tenantId, mailboxId);
       if (latest) {
         const freshness = computeFreshness("PROVIDER_CONNECTED", latest.assessedAt);
-        if (freshness !== "EXPIRED") {
+        // Stage 10 spec section 17: a new delivery event can mark this
+        // mailbox stale even while it's still time-fresh — the next
+        // decision-relevant read should pick up the new evidence rather
+        // than waiting out the rest of the time-based freshness window.
+        const stale = await invalidationStore.isStale(tenantId, mailboxId);
+        if (freshness !== "EXPIRED" && !stale) {
           return latest;
         }
       }

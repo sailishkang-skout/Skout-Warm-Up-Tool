@@ -2,11 +2,14 @@ import { createApiCredentialService, type ApiCredentialService } from "../module
 import { createAuthenticationService, type AuthenticationService } from "../modules/auth/application/authentication-service.js";
 import { PostgresApiCredentialRepository } from "../modules/auth/infrastructure/postgres-api-credential-repository.js";
 import { createPostgresAuditEventRecorder } from "../modules/audit/infrastructure/postgres-audit-event-recorder.js";
+import { createDeliveryEventService, type DeliveryEventService } from "../modules/delivery-events/application/delivery-event-service.js";
+import { PostgresDeliveryEventRepository } from "../modules/delivery-events/infrastructure/postgres-delivery-event-repository.js";
 import { createDomainIntelligenceService, type DomainIntelligenceService } from "../modules/domain-intelligence/application/domain-intelligence-service.js";
 import { createNodeDnsResolver } from "../modules/domain-intelligence/infrastructure/node-dns-resolver.js";
 import { createPostgresDomainIntelligenceRepository } from "../modules/domain-intelligence/infrastructure/postgres-domain-intelligence-repository.js";
 import { createRedisDomainCache } from "../modules/domain-intelligence/infrastructure/redis-domain-cache.js";
 import { createMailboxAssessmentService, type MailboxAssessmentService } from "../modules/health/application/mailbox-assessment-service.js";
+import { createRedisAssessmentInvalidationStore } from "../modules/health/infrastructure/redis-assessment-invalidation-store.js";
 import { PostgresMailboxAssessmentRepository } from "../modules/health/infrastructure/postgres-mailbox-assessment-repository.js";
 import { PostgresMailboxSignalRepository } from "../modules/health/infrastructure/postgres-mailbox-signal-repository.js";
 import { createMailboxService, type MailboxService } from "../modules/mailbox/application/mailbox-service.js";
@@ -21,6 +24,8 @@ import { Microsoft365Adapter } from "../modules/providers/infrastructure/microso
 import { PostgresProviderAccountRepository } from "../modules/providers/infrastructure/postgres-provider-account-repository.js";
 import { createPostgresProviderCredentialStore } from "../modules/providers/infrastructure/postgres-provider-credential-store.js";
 import { SmtpImapAdapter } from "../modules/providers/infrastructure/smtp-imap/smtp-imap-adapter.js";
+import { createReputationService, type ReputationService } from "../modules/reputation/application/reputation-service.js";
+import { PostgresReputationRepository } from "../modules/reputation/infrastructure/postgres-reputation-repository.js";
 import { PostgresTenantRepository } from "../modules/tenancy/infrastructure/postgres-tenant-repository.js";
 import { createExecutionWorker, type ExecutionWorker } from "../modules/warmup/application/execution-worker.js";
 import { createWarmupProfileService, type WarmupProfileService } from "../modules/warmup/application/warmup-profile-service.js";
@@ -44,6 +49,8 @@ export interface AppServices {
   readonly providerRegistry: ProviderRegistry;
   readonly oauthConnectionService: OAuthConnectionService;
   readonly domainIntelligenceService: DomainIntelligenceService;
+  readonly deliveryEventService: DeliveryEventService;
+  readonly reputationService: ReputationService;
   readonly mailboxAssessmentService: MailboxAssessmentService;
   readonly warmupService: WarmupService;
   readonly warmupProfileService: WarmupProfileService;
@@ -128,11 +135,34 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
     resolver: createNodeDnsResolver(),
   });
 
+  // Stage 10's feedback loop: delivery-events (raw evidence) → reputation
+  // (mailbox-level assessment) → risk (consumed as an additional factor
+  // source, see risk/application/risk-policy.ts) → the existing ramp/
+  // decision engine, unchanged. `invalidationStore` is the narrow,
+  // dependency-free port both `delivery-events` (marks stale) and `health`
+  // (checks/clears) depend on directly — see
+  // health/application/assessment-invalidation-store.ts's doc comment for
+  // why this avoids a module dependency cycle.
+  const invalidationStore = createRedisAssessmentInvalidationStore(redis);
+  const deliveryEventService = createDeliveryEventService({
+    deliveryEventRepository: new PostgresDeliveryEventRepository(database),
+    mailboxService,
+    invalidationStore,
+    auditRecorder,
+  });
+  const reputationService = createReputationService({
+    deliveryEventService,
+    reputationRepository: new PostgresReputationRepository(database),
+    auditRecorder,
+  });
+
   const mailboxAssessmentService = createMailboxAssessmentService({
     mailboxService,
     domainIntelligenceService,
     signalRepository: new PostgresMailboxSignalRepository(database),
     assessmentRepository: new PostgresMailboxAssessmentRepository(database),
+    reputationService,
+    invalidationStore,
   });
 
   const warmupProfileRepository = new PostgresWarmupProfileRepository(database);
@@ -186,6 +216,8 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
     providerRegistry,
     oauthConnectionService,
     domainIntelligenceService,
+    deliveryEventService,
+    reputationService,
     mailboxAssessmentService,
     warmupService,
     warmupProfileService,

@@ -1,16 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { createMailboxAssessmentService } from "../../src/modules/health/application/mailbox-assessment-service.js";
 import { RateLimitError } from "../../src/shared/errors/index.js";
-import { asHealthSnapshotId, asMailboxId, asTenantId, type MailboxId, type TenantId } from "../../src/shared/types/index.js";
+import { asHealthSnapshotId, asMailboxId, asReputationAssessmentId, asTenantId, type MailboxId, type TenantId } from "../../src/shared/types/index.js";
 import type { AssessmentSnapshot } from "../../src/modules/health/domain/assessment-snapshot.js";
 import type {
   CreateAssessmentSnapshotInput,
   MailboxAssessmentRepository,
 } from "../../src/modules/health/application/mailbox-assessment-repository.js";
+import type { AssessmentInvalidationStore } from "../../src/modules/health/application/assessment-invalidation-store.js";
 import type { MailboxSignalRepository } from "../../src/modules/health/application/mailbox-signal-repository.js";
 import type { DomainIntelligenceService } from "../../src/modules/domain-intelligence/application/domain-intelligence-service.js";
 import type { MailboxService } from "../../src/modules/mailbox/application/mailbox-service.js";
 import type { Mailbox } from "../../src/modules/mailbox/domain/mailbox.js";
+import type { ReputationService } from "../../src/modules/reputation/application/reputation-service.js";
+import type { ReputationAssessment } from "../../src/modules/reputation/domain/reputation-assessment.js";
 
 const TENANT_ID = asTenantId("11111111-1111-1111-1111-111111111111");
 const MAILBOX_ID = asMailboxId("22222222-2222-2222-2222-222222222222");
@@ -131,6 +134,49 @@ function makeFakeAssessmentRepository(): MailboxAssessmentRepository & { snapsho
   };
 }
 
+function makeFakeReputationService(): ReputationService {
+  const assessment: ReputationAssessment = {
+    id: asReputationAssessmentId("reputation-1"),
+    tenantId: TENANT_ID,
+    mailboxId: MAILBOX_ID,
+    status: "UNKNOWN",
+    confidence: "LOW",
+    factors: [],
+    trends: { delivery: "UNKNOWN", bounce: "UNKNOWN", throttle: "UNKNOWN", failure: "UNKNOWN", complaint: "UNKNOWN" },
+    last24h: { eventCount: 0, deliveryRate: "UNKNOWN", bounceRate: "UNKNOWN", hardBounceRate: "UNKNOWN", softBounceRate: "UNKNOWN", throttleRate: "UNKNOWN", rejectionRate: "UNKNOWN", failureRate: "UNKNOWN", complaintRate: "UNKNOWN", unknownRate: "UNKNOWN" },
+    last7d: { eventCount: 0, deliveryRate: "UNKNOWN", bounceRate: "UNKNOWN", hardBounceRate: "UNKNOWN", softBounceRate: "UNKNOWN", throttleRate: "UNKNOWN", rejectionRate: "UNKNOWN", failureRate: "UNKNOWN", complaintRate: "UNKNOWN", unknownRate: "UNKNOWN" },
+    lifetime: { eventCount: 0, deliveryRate: "UNKNOWN", bounceRate: "UNKNOWN", hardBounceRate: "UNKNOWN", softBounceRate: "UNKNOWN", throttleRate: "UNKNOWN", rejectionRate: "UNKNOWN", failureRate: "UNKNOWN", complaintRate: "UNKNOWN", unknownRate: "UNKNOWN" },
+    assessedAt: new Date(),
+    createdAt: new Date(),
+  };
+  return {
+    async assessReputation() {
+      return assessment;
+    },
+    async getLatest() {
+      return assessment;
+    },
+    async getHistory() {
+      return [assessment];
+    },
+  };
+}
+
+function makeFakeInvalidationStore(): AssessmentInvalidationStore {
+  const stale = new Set<string>();
+  return {
+    async markStale(tenantId, mailboxId) {
+      stale.add(`${tenantId}:${mailboxId}`);
+    },
+    async isStale(tenantId, mailboxId) {
+      return stale.has(`${tenantId}:${mailboxId}`);
+    },
+    async clear(tenantId, mailboxId) {
+      stale.delete(`${tenantId}:${mailboxId}`);
+    },
+  };
+}
+
 function buildService(mailbox: Mailbox = makeMailbox()) {
   const assessmentRepository = makeFakeAssessmentRepository();
   const signalRepository = makeFakeSignalRepository();
@@ -139,6 +185,8 @@ function buildService(mailbox: Mailbox = makeMailbox()) {
     domainIntelligenceService: makeFakeDomainIntelligenceService(),
     signalRepository,
     assessmentRepository,
+    reputationService: makeFakeReputationService(),
+    invalidationStore: makeFakeInvalidationStore(),
   });
   return { service, assessmentRepository, signalRepository };
 }
