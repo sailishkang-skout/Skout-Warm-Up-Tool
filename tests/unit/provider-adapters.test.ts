@@ -15,7 +15,7 @@ const ADAPTERS: Array<{ name: string; adapter: ProviderAdapter }> = [
 
 const FAKE_CREDENTIAL: ProviderCredential = {
   providerAccountId: asProviderAccountId("11111111-1111-1111-1111-111111111111"),
-  kind: "oauth2",
+  kind: "GOOGLE_OAUTH",
   secretData: {},
 };
 

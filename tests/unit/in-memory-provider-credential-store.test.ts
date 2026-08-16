@@ -9,7 +9,7 @@ const OTHER_ACCOUNT_ID = asProviderAccountId("22222222-2222-2222-2222-2222222222
 
 const CREDENTIAL: ProviderCredential = {
   providerAccountId: ACCOUNT_ID,
-  kind: "oauth2",
+  kind: "GOOGLE_OAUTH",
   secretData: { accessToken: "fake-for-test-only" },
 };
 
@@ -39,16 +39,16 @@ describe("createInMemoryProviderCredentialStore", () => {
     expect(await store.getCredential(OTHER_ACCOUNT_ID)).toBeUndefined();
   });
 
-  it("deleteCredential removes it", async () => {
+  it("revokeCredential removes it", async () => {
     const store = createInMemoryProviderCredentialStore({ isProduction: false });
     await store.saveCredential(CREDENTIAL);
-    await store.deleteCredential(ACCOUNT_ID);
+    await store.revokeCredential(ACCOUNT_ID);
     expect(await store.getCredential(ACCOUNT_ID)).toBeUndefined();
   });
 
-  it("deleteCredential on a nonexistent entry does not throw", async () => {
+  it("revokeCredential on a nonexistent entry does not throw", async () => {
     const store = createInMemoryProviderCredentialStore({ isProduction: false });
-    await expect(store.deleteCredential(ACCOUNT_ID)).resolves.toBeUndefined();
+    await expect(store.revokeCredential(ACCOUNT_ID)).resolves.toBeUndefined();
   });
 
   it("saveCredential overwrites an existing credential for the same account", async () => {

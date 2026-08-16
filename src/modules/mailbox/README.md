@@ -10,9 +10,10 @@ see `domain/mailbox-lifecycle.ts` for the full transition graph and
 AT_RISK, ...) were deliberately dropped from this enum — they belong to a
 future warmup_profile, not to whether the mailbox is connected.
 
-Also owns encrypted credential *references* for connected mailboxes (never
-plaintext credentials — see the `providers` module's `ProviderCredentialStore`
-boundary, consumed here via `MailboxService`).
+Never touches plaintext credentials directly — `MailboxService` only ever
+receives an opaque `ProviderCredential` from the `providers` module's
+`ProviderCredentialStore` boundary, and only to hand it to a
+`ProviderAdapter` method.
 
 **Boundary**:
 - All lifecycle transitions go through `mailbox-lifecycle.ts`'s
@@ -25,6 +26,18 @@ boundary, consumed here via `MailboxService`).
 - `MailboxService.createMailbox` creates the mailbox and its `ProviderAccount`
   atomically (one DB transaction) — every mailbox has exactly one provider
   account by construction, never as an eventually-consistent afterthought.
+- `connectMailbox`/`getConnectionHealth`/`getBaseline` all route through
+  `resolveFreshCredential` before touching the adapter — a near-expired
+  OAuth access token is refreshed (via `adapter.oauth.refreshAccessToken`)
+  and re-persisted first; a refresh token that's no longer valid gets
+  revoked rather than retried forever (Stage 6 spec section 10).
+- The actual OAuth authorization-code/callback flow (state, PKCE, identity
+  validation, credential persistence) is orchestrated by the `oauth` module,
+  not here — see `src/modules/oauth/README.md`. This module only exposes
+  the connection-lifecycle primitives (`connectMailbox`, capabilities,
+  health/connection/baseline snapshots) that flow depends on.
 
 **Target stage**: Stage 3 (persistence foundation), Stage 5 (lifecycle,
-provider abstraction, `MailboxService`, `/api/v1/mailboxes`).
+provider abstraction, `MailboxService`, `/api/v1/mailboxes`), Stage 6
+(audit events on create/disconnect, credential refresh, connection
+health/snapshot/baseline endpoints).

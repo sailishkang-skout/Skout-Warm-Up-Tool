@@ -149,3 +149,48 @@ export class InternalError extends AppError {
     super(message, options);
   }
 }
+
+/**
+ * An OAuth authorization-code flow failed for a reason that is not a
+ * misconfigured deployment (that's `ConfigurationError`) and not the
+ * provider itself rejecting an authenticated request (that's
+ * `ProviderError`) — e.g. the user denied consent, the provider's callback
+ * returned an error parameter, or a code exchange failed. `message` must
+ * stay generic; never forward a raw OAuth `error_description` to the client
+ * (see Stage 6 spec section 21) — put that in `details` instead.
+ */
+export class OAuthError extends AppError {
+  readonly code = "OAUTH_ERROR" as const;
+  readonly httpStatus = 400;
+  readonly isOperational = true;
+}
+
+/**
+ * The identity the provider actually authenticated does not match the
+ * mailbox the tenant asked to connect (e.g. requested alice@example.com,
+ * OAuth authenticated bob@example.com). This is a mandatory security
+ * invariant, not a soft warning — connecting would let one party's mailbox
+ * get silently attached to another party's record.
+ */
+export class ProviderIdentityMismatchError extends AppError {
+  readonly code = "PROVIDER_IDENTITY_MISMATCH" as const;
+  readonly httpStatus = 409;
+  readonly isOperational = true;
+}
+
+/**
+ * A stored credential could not be decrypted or authenticated — wrong/rotated
+ * key, tampered ciphertext, or corrupt storage. Not operational: this
+ * indicates either an infrastructure problem (lost/rotated encryption key)
+ * or a genuine security event (tampering), never a normal, expected failure
+ * mode a caller should just retry.
+ */
+export class CredentialError extends AppError {
+  readonly code = "CREDENTIAL_ERROR" as const;
+  readonly httpStatus = 500;
+  readonly isOperational = false;
+
+  constructor(message = "A stored credential could not be used", options: AppErrorOptions = {}) {
+    super(message, options);
+  }
+}

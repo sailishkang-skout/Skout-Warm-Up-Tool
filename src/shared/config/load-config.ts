@@ -19,6 +19,10 @@ export interface AppConfig {
   };
   readonly redis: { readonly url: string };
   readonly security: { readonly encryptionKey: string; readonly apiKeyPepper: string };
+  readonly providers: {
+    readonly google?: { readonly clientId: string; readonly clientSecret: string; readonly redirectUri: string };
+    readonly microsoft?: { readonly clientId: string; readonly clientSecret: string; readonly redirectUri: string };
+  };
 }
 
 /**
@@ -72,6 +76,29 @@ function toAppConfig(env: EnvShape): AppConfig {
     security: {
       encryptionKey: env.ENCRYPTION_KEY,
       apiKeyPepper: env.API_KEY_PEPPER,
+    },
+    providers: {
+      // The schema's `.check()` already guarantees each triplet is
+      // all-or-nothing, so checking just one field here is enough to know
+      // whether the whole group is present.
+      ...(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REDIRECT_URI
+        ? {
+            google: {
+              clientId: env.GOOGLE_CLIENT_ID,
+              clientSecret: env.GOOGLE_CLIENT_SECRET,
+              redirectUri: env.GOOGLE_REDIRECT_URI,
+            },
+          }
+        : {}),
+      ...(env.MICROSOFT_CLIENT_ID && env.MICROSOFT_CLIENT_SECRET && env.MICROSOFT_REDIRECT_URI
+        ? {
+            microsoft: {
+              clientId: env.MICROSOFT_CLIENT_ID,
+              clientSecret: env.MICROSOFT_CLIENT_SECRET,
+              redirectUri: env.MICROSOFT_REDIRECT_URI,
+            },
+          }
+        : {}),
     },
   };
 }

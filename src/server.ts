@@ -2,8 +2,9 @@ import "dotenv/config";
 import { buildApp } from "./app.js";
 import { loadConfig, type AppConfig } from "./shared/config/index.js";
 import { createDatabase, createPool, type Database } from "./shared/db/index.js";
-import { DatabaseError } from "./shared/errors/index.js";
+import { DatabaseError, TransientError } from "./shared/errors/index.js";
 import { createLogger, type Logger } from "./shared/logger/index.js";
+import { checkRedisConnectivity, createRedisClient, type RedisClient } from "./shared/redis/index.js";
 
 function loadConfigOrExit(): AppConfig {
   try {
@@ -40,10 +41,27 @@ async function connectDatabaseOrExit(config: AppConfig, logger: Logger): Promise
   return database;
 }
 
-// Startup order matters: config → logger → database → application → server.
-// Database connectivity is verified before the app is even built, so a
-// broken database never results in a partially-working process that accepts
-// traffic it can't actually serve.
+async function connectRedisOrExit(config: AppConfig, logger: Logger): Promise<RedisClient> {
+  const redis = createRedisClient(config.redis.url, logger);
+
+  const isConnected = await checkRedisConnectivity(redis);
+  if (!isConnected) {
+    logger.error(
+      { err: new TransientError("Failed to establish initial Redis connectivity") },
+      "Redis initialization failed - refusing to start",
+    );
+    redis.disconnect();
+    process.exit(1);
+  }
+
+  return redis;
+}
+
+// Startup order matters: config → logger → database/redis → application →
+// server. Both dependencies are verified before the app is even built, so a
+// broken database or Redis never results in a partially-working process
+// that accepts traffic it can't actually serve — OAuth state and the
+// per-mailbox connection lock both require Redis unconditionally.
 const config = loadConfigOrExit();
 const logger = createLogger({
   level: config.log.level,
@@ -51,7 +69,8 @@ const logger = createLogger({
   env: config.env,
 });
 const database = await connectDatabaseOrExit(config, logger);
-const app = await buildApp(config, logger, database);
+const redis = await connectRedisOrExit(config, logger);
+const app = await buildApp(config, logger, database, redis);
 
 let isShuttingDown = false;
 
@@ -64,10 +83,11 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   logger.info({ signal }, "Received shutdown signal, closing gracefully");
   try {
     // app.close() stops accepting new connections and waits for in-flight
-    // requests before resolving, so the database is only closed once
-    // nothing can issue a query against it anymore.
+    // requests before resolving, so the database/Redis are only closed once
+    // nothing can issue a query/command against them anymore.
     await app.close();
     await database.close();
+    await redis.quit();
     logger.info("Shutdown complete");
     process.exit(0);
   } catch (error) {
@@ -87,5 +107,6 @@ try {
 } catch (error) {
   app.log.error(error);
   await database.close().catch(() => undefined);
+  redis.disconnect();
   process.exit(1);
 }

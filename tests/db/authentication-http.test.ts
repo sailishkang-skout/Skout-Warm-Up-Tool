@@ -18,31 +18,40 @@ import { runMigrations } from "../../src/shared/db/index.js";
 import { createLogger } from "../../src/shared/logger/index.js";
 import {
   createTestDatabaseHandle,
+  createTestRedisHandle,
   ensureTestDatabaseExists,
+  flushTestRedis,
   resetSchema,
   truncateAppTables,
   type TestDatabaseHandle,
 } from "./support.js";
+import type { RedisClient } from "../../src/shared/redis/index.js";
 
 const testConfig = { ...loadConfig({ NODE_ENV: "test" }), log: { level: "silent" as const } };
 const silentLogger = createLogger({ level: "silent", serviceName: testConfig.service.name, env: testConfig.env });
 
 let handle: TestDatabaseHandle;
+let redis: RedisClient;
 
 beforeAll(async () => {
   await ensureTestDatabaseExists();
   handle = createTestDatabaseHandle();
+  redis = createTestRedisHandle();
   await resetSchema(handle.pool);
   await runMigrations(handle.pool, silentLogger);
 }, 30_000);
 
 beforeEach(async () => {
   await truncateAppTables(handle.pool);
+  await flushTestRedis(redis);
 });
 
 afterAll(async () => {
   if (handle) {
     await handle.database.close();
+  }
+  if (redis) {
+    redis.disconnect();
   }
 });
 
@@ -71,7 +80,7 @@ function createCapturingDestination(): { destination: DestinationStream; text: (
 
 describe("authentication — missing/malformed/invalid credentials", () => {
   it("rejects a request with no Authorization header", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const response = await app.inject({ method: "GET", url: "/api/v1/credentials" });
     expect(response.statusCode).toBe(401);
     expect(response.json()).toMatchObject({ error: { code: "AUTHENTICATION_ERROR" } });
@@ -79,7 +88,7 @@ describe("authentication — missing/malformed/invalid credentials", () => {
   });
 
   it("rejects a malformed Authorization header (not Bearer)", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const response = await app.inject({
       method: "GET",
       url: "/api/v1/credentials",
@@ -90,7 +99,7 @@ describe("authentication — missing/malformed/invalid credentials", () => {
   });
 
   it("rejects an Authorization header that is 'Bearer' with no token", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const response = await app.inject({
       method: "GET",
       url: "/api/v1/credentials",
@@ -101,7 +110,7 @@ describe("authentication — missing/malformed/invalid credentials", () => {
   });
 
   it("rejects a well-formed but unknown key", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const response = await app.inject({
       method: "GET",
       url: "/api/v1/credentials",
@@ -112,7 +121,7 @@ describe("authentication — missing/malformed/invalid credentials", () => {
   });
 
   it("rejects a revoked key", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { tenant, credential, apiKey } = await bootstrapTenantAndCredential("Revoked Co");
     await new PostgresApiCredentialRepository(handle.database).revoke(tenant.id, credential.id);
 
@@ -126,7 +135,7 @@ describe("authentication — missing/malformed/invalid credentials", () => {
   });
 
   it("rejects an expired key", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const tenantRepository = new PostgresTenantRepository(handle.database);
     const credentialRepository = new PostgresApiCredentialRepository(handle.database);
     const tenant = await tenantRepository.create({ name: "Expired Co" });
@@ -149,7 +158,7 @@ describe("authentication — missing/malformed/invalid credentials", () => {
   });
 
   it("rejects a key belonging to a suspended tenant", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey, tenant } = await bootstrapTenantAndCredential("Suspend Me Co");
     await handle.database.query("UPDATE tenants SET status = 'SUSPENDED' WHERE id = $1", [tenant.id]);
 
@@ -163,7 +172,7 @@ describe("authentication — missing/malformed/invalid credentials", () => {
   });
 
   it("rejects a key belonging to a deleted tenant", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey, tenant } = await bootstrapTenantAndCredential("Delete Me Co");
     await handle.database.query("UPDATE tenants SET status = 'DELETED' WHERE id = $1", [tenant.id]);
 
@@ -179,7 +188,7 @@ describe("authentication — missing/malformed/invalid credentials", () => {
 
 describe("authentication — valid credentials", () => {
   it("authenticates successfully", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey } = await bootstrapTenantAndCredential("Happy Path Co");
 
     const response = await app.inject({
@@ -194,7 +203,7 @@ describe("authentication — valid credentials", () => {
   });
 
   it("resolves tenant identity from the credential, ignoring any tenantId in the request body", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { tenant, apiKey } = await bootstrapTenantAndCredential("Real Tenant Co");
     const foreignTenantId = "11111111-1111-1111-1111-111111111111";
 
@@ -218,7 +227,7 @@ describe("authentication — valid credentials", () => {
   });
 
   it("returns the full API key exactly once on creation, with an explicit one-time warning", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey } = await bootstrapTenantAndCredential("Create Co");
 
     const response = await app.inject({
@@ -236,7 +245,7 @@ describe("authentication — valid credentials", () => {
   });
 
   it("never returns the secret or hash from the list endpoint", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey } = await bootstrapTenantAndCredential("List Co");
 
     const response = await app.inject({
@@ -252,7 +261,7 @@ describe("authentication — valid credentials", () => {
   });
 
   it("rotate returns a new key once and revoke never returns a secret", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey, credential } = await bootstrapTenantAndCredential("Rotate Co");
 
     const rotateResponse = await app.inject({
@@ -280,7 +289,7 @@ describe("authentication — valid credentials", () => {
 
 describe("tenant isolation — no cross-tenant access", () => {
   it("cannot rotate a credential belonging to a different tenant", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const tenantA = await bootstrapTenantAndCredential("Tenant A");
     const tenantB = await bootstrapTenantAndCredential("Tenant B");
 
@@ -295,7 +304,7 @@ describe("tenant isolation — no cross-tenant access", () => {
   });
 
   it("cannot revoke a credential belonging to a different tenant, and the target credential is left untouched", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const tenantA = await bootstrapTenantAndCredential("Tenant A");
     const tenantB = await bootstrapTenantAndCredential("Tenant B");
 
@@ -315,7 +324,7 @@ describe("tenant isolation — no cross-tenant access", () => {
   });
 
   it("tenant A's credential list never includes tenant B's credentials", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const tenantA = await bootstrapTenantAndCredential("Tenant A");
     await bootstrapTenantAndCredential("Tenant B");
 
@@ -336,7 +345,7 @@ describe("security — no secret leakage", () => {
   it("never logs the raw API key or Authorization header across valid, invalid, and creation requests", async () => {
     const { destination, text } = createCapturingDestination();
     const capturingLogger = createLogger({ level: "info", serviceName: "test", env: "test" }, destination);
-    const app = await buildApp(testConfig, capturingLogger, handle.database);
+    const app = await buildApp(testConfig, capturingLogger, handle.database, redis);
     const { apiKey } = await bootstrapTenantAndCredential("Log Safety Co");
 
     await app.inject({ method: "GET", url: "/api/v1/credentials", headers: { authorization: `Bearer ${apiKey}` } });

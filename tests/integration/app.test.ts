@@ -4,6 +4,7 @@ import { loadConfig } from "../../src/shared/config/index.js";
 import { ValidationError } from "../../src/shared/errors/index.js";
 import { createLogger } from "../../src/shared/logger/index.js";
 import { createFakeDatabase } from "../support/fake-database.js";
+import { createFakeRedis } from "../support/fake-redis.js";
 
 const testConfig = { ...loadConfig({ NODE_ENV: "test" }), log: { level: "silent" as const } };
 const testLogger = createLogger({
@@ -22,8 +23,13 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * adds two throwaway routes solely to exercise the error handler's branches;
  * these are test scaffolding, not business routes added to `src/app.ts`.
  */
-async function buildTestApp(databaseConnected = true) {
-  const app = await buildApp(testConfig, testLogger, createFakeDatabase({ connected: databaseConnected }));
+async function buildTestApp(databaseConnected = true, redisConnected = true) {
+  const app = await buildApp(
+    testConfig,
+    testLogger,
+    createFakeDatabase({ connected: databaseConnected }),
+    createFakeRedis({ connected: redisConnected }),
+  );
 
   app.get("/__test/throws-app-error", async () => {
     throw new ValidationError("bad payload", { fieldErrors: { name: ["is required"] } });
@@ -74,21 +80,30 @@ describe("GET /health", () => {
 });
 
 describe("GET /readiness", () => {
-  it("returns 200 ready when the database is reachable", async () => {
-    const app = await buildTestApp(true);
+  it("returns 200 ready when the database and Redis are both reachable", async () => {
+    const app = await buildTestApp(true, true);
     const response = await app.inject({ method: "GET", url: "/readiness" });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ status: "ready", checks: { database: "ok" } });
+    expect(response.json()).toEqual({ status: "ready", checks: { database: "ok", redis: "ok" } });
     await app.close();
   });
 
   it("returns 503 not_ready when the database is unreachable", async () => {
-    const app = await buildTestApp(false);
+    const app = await buildTestApp(false, true);
     const response = await app.inject({ method: "GET", url: "/readiness" });
 
     expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({ status: "not_ready", checks: { database: "unavailable" } });
+    expect(response.json()).toEqual({ status: "not_ready", checks: { database: "unavailable", redis: "ok" } });
+    await app.close();
+  });
+
+  it("returns 503 not_ready when Redis is unreachable", async () => {
+    const app = await buildTestApp(true, false);
+    const response = await app.inject({ method: "GET", url: "/readiness" });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ status: "not_ready", checks: { database: "ok", redis: "unavailable" } });
     await app.close();
   });
 });

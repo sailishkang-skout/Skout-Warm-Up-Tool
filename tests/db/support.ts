@@ -1,9 +1,26 @@
 import { Client, DatabaseError as PgDatabaseError, Pool } from "pg";
 import { createDatabase, createPool, type Database } from "../../src/shared/db/index.js";
 import { createLogger } from "../../src/shared/logger/index.js";
+import { createRedisClient, type RedisClient } from "../../src/shared/redis/index.js";
 
 export const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5433/skout_warmup_test";
+
+// Logical database 1, not 0: this suite must never share keyspace with a
+// developer's own `redis-cli` session against the same docker-compose Redis
+// instance (there is no separate "test Redis" the way TEST_DATABASE_URL
+// gets a wholly separate Postgres database) — an isolated logical DB is the
+// cheapest equivalent, and lets `flushTestRedis` use FLUSHDB safely.
+export const TEST_REDIS_URL = process.env.TEST_REDIS_URL ?? "redis://localhost:6380/1";
+
+export function createTestRedisHandle(): RedisClient {
+  const logger = createLogger({ level: "silent", serviceName: "skout-email-warmup-service-tests", env: "test" });
+  return createRedisClient(TEST_REDIS_URL, logger);
+}
+
+export async function flushTestRedis(redis: RedisClient): Promise<void> {
+  await redis.flushdb();
+}
 
 // 42P04 (duplicate_database) is what a straightforward "already exists"
 // check produces. 23505 (unique_violation) is what a genuine *concurrent*
@@ -84,6 +101,8 @@ export function createTestDatabaseHandle(): TestDatabaseHandle {
 
 /** Drops every object migrations create, for tests that exercise the migration runner itself from empty state. */
 export async function resetSchema(pool: Pool): Promise<void> {
+  await pool.query("DROP TABLE IF EXISTS connection_attempts CASCADE");
+  await pool.query("DROP TABLE IF EXISTS provider_credentials CASCADE");
   await pool.query("DROP TABLE IF EXISTS audit_events CASCADE");
   await pool.query("DROP TABLE IF EXISTS api_credentials CASCADE");
   await pool.query("DROP TABLE IF EXISTS provider_accounts CASCADE");
@@ -96,6 +115,6 @@ export async function resetSchema(pool: Pool): Promise<void> {
 /** For tests that need the schema in place but a clean set of rows between cases. */
 export async function truncateAppTables(pool: Pool): Promise<void> {
   await pool.query(
-    "TRUNCATE TABLE audit_events, api_credentials, provider_accounts, mailboxes, tenants RESTART IDENTITY",
+    "TRUNCATE TABLE connection_attempts, provider_credentials, audit_events, api_credentials, provider_accounts, mailboxes, tenants RESTART IDENTITY",
   );
 }

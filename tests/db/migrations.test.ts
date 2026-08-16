@@ -20,6 +20,8 @@ const ALL_MIGRATION_FILENAMES = [
   "004_create_api_credentials.sql",
   "005_create_audit_events.sql",
   "006_mailbox_lifecycle_and_provider_metadata.sql",
+  "007_create_provider_credentials.sql",
+  "008_create_connection_attempts.sql",
 ];
 
 let handle: TestDatabaseHandle;
@@ -55,6 +57,8 @@ describe("runMigrations", () => {
     await expect(handle.database.query("SELECT * FROM provider_accounts LIMIT 0")).resolves.toEqual([]);
     await expect(handle.database.query("SELECT * FROM api_credentials LIMIT 0")).resolves.toEqual([]);
     await expect(handle.database.query("SELECT * FROM audit_events LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM provider_credentials LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM connection_attempts LIMIT 0")).resolves.toEqual([]);
   });
 
   it("is idempotent — running it again applies nothing further", async () => {
@@ -79,7 +83,7 @@ describe("getMigrationStatus", () => {
   it("reports every migration as pending against an empty schema", async () => {
     const status = await getMigrationStatus(handle.pool);
     expect(status.every((entry) => !entry.applied)).toBe(true);
-    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   it("reports applied migrations with an appliedAt timestamp after running them", async () => {

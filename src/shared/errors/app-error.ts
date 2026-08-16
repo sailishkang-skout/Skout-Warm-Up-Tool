@@ -12,7 +12,10 @@ export type ErrorCode =
   | "DATABASE_ERROR"
   | "QUEUE_ERROR"
   | "POLICY_ERROR"
-  | "INTERNAL_ERROR";
+  | "INTERNAL_ERROR"
+  | "OAUTH_ERROR"
+  | "PROVIDER_IDENTITY_MISMATCH"
+  | "CREDENTIAL_ERROR";
 
 export interface AppErrorOptions {
   readonly details?: Record<string, unknown>;

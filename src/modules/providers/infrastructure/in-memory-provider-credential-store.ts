@@ -32,7 +32,7 @@ export function createInMemoryProviderCredentialStore(options: { isProduction: b
     async saveCredential(credential: ProviderCredential): Promise<void> {
       credentials.set(credential.providerAccountId, credential);
     },
-    async deleteCredential(providerAccountId: ProviderAccountId): Promise<void> {
+    async revokeCredential(providerAccountId: ProviderAccountId): Promise<void> {
       credentials.delete(providerAccountId);
     },
   };

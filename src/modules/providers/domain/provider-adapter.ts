@@ -1,4 +1,5 @@
 import type { MailboxProviderType } from "../../mailbox/domain/mailbox.js";
+import type { OAuthOperations } from "./oauth-operations.js";
 import type { ProviderCapabilities } from "./provider-capabilities.js";
 import type { ProviderConnectionValidationResult } from "./provider-connection-validation.js";
 import type { ProviderCredential } from "./provider-credential.js";
@@ -52,4 +53,7 @@ export interface ProviderAdapter {
 
   /** Point-in-time health snapshot. Safe to call with no credential — returns `UNKNOWN`/`UNAUTHENTICATED` rather than throwing. */
   getConnectionHealth(credential: ProviderCredential | undefined): Promise<ProviderHealthResult>;
+
+  /** Present only on adapters that connect via OAuth (Gmail, Microsoft 365) — undefined on SMTP/IMAP. */
+  readonly oauth?: OAuthOperations;
 }

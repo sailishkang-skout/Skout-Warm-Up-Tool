@@ -4,6 +4,7 @@
  * (still-unconfigured) connection lifecycle — no mocked SQL behavior.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createPostgresAuditEventRecorder } from "../../src/modules/audit/infrastructure/postgres-audit-event-recorder.js";
 import { createMailboxService } from "../../src/modules/mailbox/application/mailbox-service.js";
 import { PostgresMailboxRepository } from "../../src/modules/mailbox/infrastructure/postgres-mailbox-repository.js";
 import { createProviderRegistry } from "../../src/modules/providers/application/provider-registry.js";
@@ -58,6 +59,7 @@ function buildMailboxService() {
     providerAccountRepositoryFactory: (db) => new PostgresProviderAccountRepository(db),
     providerRegistry,
     credentialStore: createInMemoryProviderCredentialStore({ isProduction: false }),
+    auditRecorder: createPostgresAuditEventRecorder(handle.database, logger),
   });
 }
 

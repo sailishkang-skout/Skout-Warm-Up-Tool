@@ -35,6 +35,18 @@ export const envSchema = z
     // HMAC pepper for API credential hashing — see src/modules/auth/domain/api-key-hash.ts
     // for why HMAC-SHA256 rather than a password KDF, and why a pepper at all.
     API_KEY_PEPPER: z.string().min(32, "API_KEY_PEPPER must be at least 32 characters"),
+    // Google/Microsoft OAuth: each provider's three values are optional as a
+    // *group* — a deployment that never connects Gmail/M365 mailboxes must
+    // not be forced to fabricate OAuth client secrets it will never use.
+    // The `.check()` below enforces "all three or none" per provider so a
+    // half-configured provider fails startup instead of silently behaving
+    // as NOT_CONFIGURED when someone meant to enable it (see load-config.ts).
+    GOOGLE_CLIENT_ID: z.string().min(1).optional(),
+    GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+    GOOGLE_REDIRECT_URI: z.string().url().optional(),
+    MICROSOFT_CLIENT_ID: z.string().min(1).optional(),
+    MICROSOFT_CLIENT_SECRET: z.string().min(1).optional(),
+    MICROSOFT_REDIRECT_URI: z.string().url().optional(),
   })
   .check((ctx) => {
     if (ctx.value.DB_POOL_MIN > ctx.value.DB_POOL_MAX) {
@@ -42,6 +54,32 @@ export const envSchema = z
         code: "custom",
         message: "DB_POOL_MIN must not be greater than DB_POOL_MAX",
         path: ["DB_POOL_MIN"],
+        input: ctx.value,
+      });
+    }
+
+    const googleFields = [ctx.value.GOOGLE_CLIENT_ID, ctx.value.GOOGLE_CLIENT_SECRET, ctx.value.GOOGLE_REDIRECT_URI];
+    if (new Set(googleFields.map((v) => v === undefined)).size > 1) {
+      ctx.issues.push({
+        code: "custom",
+        message:
+          "GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI must be set together, or not at all",
+        path: ["GOOGLE_CLIENT_ID"],
+        input: ctx.value,
+      });
+    }
+
+    const microsoftFields = [
+      ctx.value.MICROSOFT_CLIENT_ID,
+      ctx.value.MICROSOFT_CLIENT_SECRET,
+      ctx.value.MICROSOFT_REDIRECT_URI,
+    ];
+    if (new Set(microsoftFields.map((v) => v === undefined)).size > 1) {
+      ctx.issues.push({
+        code: "custom",
+        message:
+          "MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, and MICROSOFT_REDIRECT_URI must be set together, or not at all",
+        path: ["MICROSOFT_CLIENT_ID"],
         input: ctx.value,
       });
     }

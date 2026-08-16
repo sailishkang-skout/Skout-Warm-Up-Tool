@@ -2,8 +2,14 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from "fastif
 import { z } from "zod";
 import { AuthorizationError, ValidationError } from "../../../shared/errors/index.js";
 import { asMailboxId, type MailboxId, type TenantId } from "../../../shared/types/index.js";
+import type { OAuthCapableProviderType, OAuthConnectionService } from "../../oauth/application/oauth-connection-service.js";
 import type { ProviderCapabilities } from "../../providers/domain/provider-capabilities.js";
-import type { MailboxService } from "../application/mailbox-service.js";
+import type {
+  ConnectionHealthSnapshot,
+  ConnectionSnapshot,
+  MailboxBaseline,
+  MailboxService,
+} from "../application/mailbox-service.js";
 import { MAILBOX_PROVIDER_TYPES } from "../domain/mailbox.js";
 import type { Mailbox } from "../domain/mailbox.js";
 
@@ -54,8 +60,60 @@ function toSafeCapabilitiesResponse(mailbox: Mailbox, capabilities: ProviderCapa
   return { mailboxId: mailbox.id, provider: mailbox.provider, capabilities };
 }
 
-/** Registered under /api/v1/mailboxes. Every route requires authentication. */
-export function mailboxRoutes(mailboxService: MailboxService): FastifyPluginAsync {
+function toSafeConnectionResponse(snapshot: ConnectionSnapshot) {
+  return {
+    mailboxId: snapshot.mailboxId,
+    provider: snapshot.provider,
+    mailboxStatus: snapshot.mailboxStatus,
+    enabled: snapshot.enabled,
+    providerAccountStatus: snapshot.providerAccountStatus,
+    ...(snapshot.lastCheckedAt ? { lastCheckedAt: snapshot.lastCheckedAt.toISOString() } : {}),
+    ...(snapshot.lastError ? { lastError: snapshot.lastError } : {}),
+  };
+}
+
+function toSafeHealthResponse(snapshot: ConnectionHealthSnapshot) {
+  return {
+    mailboxId: snapshot.mailboxId,
+    provider: snapshot.provider,
+    status: snapshot.status,
+    authenticationStatus: snapshot.authenticationStatus,
+    checkedAt: snapshot.checkedAt.toISOString(),
+    ...(snapshot.latencyMs !== undefined ? { latencyMs: snapshot.latencyMs } : {}),
+    sendCapability: snapshot.sendCapability,
+    receiveCapability: snapshot.receiveCapability,
+    ...(snapshot.message ? { message: snapshot.message } : {}),
+  };
+}
+
+function toSafeBaselineResponse(baseline: MailboxBaseline) {
+  return {
+    mailboxId: baseline.mailboxId,
+    provider: baseline.provider,
+    connectionStatus: baseline.connectionStatus,
+    authenticationHealth: baseline.authenticationHealth,
+    sendCapability: baseline.sendCapability,
+    receiveCapability: baseline.receiveCapability,
+    mailboxAgeDays: baseline.mailboxAgeDays,
+  };
+}
+
+const OAUTH_PROVIDER_SEGMENTS = { google: "GMAIL", microsoft: "MICROSOFT365" } as const satisfies Record<
+  string,
+  OAuthCapableProviderType
+>;
+
+/**
+ * Registered under /api/v1/mailboxes. Every route requires authentication —
+ * including `/connect/google` and `/connect/microsoft`, which only *start*
+ * the OAuth flow (returning an authorization URL); the callback that
+ * completes it is public (see ../../oauth/api/oauth-routes.ts) because the
+ * provider redirect can't carry a Skout API key.
+ */
+export function mailboxRoutes(
+  mailboxService: MailboxService,
+  oauthConnectionService: OAuthConnectionService,
+): FastifyPluginAsync {
   return async (fastify: FastifyInstance) => {
     fastify.post("/", { preHandler: fastify.authenticate }, async (request, reply) => {
       const tenantId = requireTenantId(request);
@@ -139,6 +197,50 @@ export function mailboxRoutes(mailboxService: MailboxService): FastifyPluginAsyn
           mailboxService.getCapabilities(tenantId, mailboxId),
         ]);
         return toSafeCapabilitiesResponse(mailbox, capabilities);
+      },
+    );
+
+    for (const [segment, providerType] of Object.entries(OAUTH_PROVIDER_SEGMENTS)) {
+      fastify.post<{ Params: { id: string } }>(
+        `/:id/connect/${segment}`,
+        { preHandler: fastify.authenticate },
+        async (request, reply) => {
+          const tenantId = requireTenantId(request);
+          const mailboxId = parseMailboxId(request.params.id);
+          const { authorizationUrl } = await oauthConnectionService.initiate(tenantId, mailboxId, providerType, {
+            requestId: request.ctx.requestId,
+            correlationId: request.ctx.correlationId,
+            ...(request.ctx.actor ? { actorId: request.ctx.actor.credentialId } : {}),
+          });
+          reply.status(202);
+          return { authorizationUrl };
+        },
+      );
+    }
+
+    fastify.get<{ Params: { id: string } }>(
+      "/:id/connection",
+      { preHandler: fastify.authenticate },
+      async (request) => {
+        const tenantId = requireTenantId(request);
+        const snapshot = await mailboxService.getConnectionSnapshot(tenantId, parseMailboxId(request.params.id));
+        return toSafeConnectionResponse(snapshot);
+      },
+    );
+
+    fastify.get<{ Params: { id: string } }>("/:id/health", { preHandler: fastify.authenticate }, async (request) => {
+      const tenantId = requireTenantId(request);
+      const snapshot = await mailboxService.getConnectionHealth(tenantId, parseMailboxId(request.params.id));
+      return toSafeHealthResponse(snapshot);
+    });
+
+    fastify.get<{ Params: { id: string } }>(
+      "/:id/baseline",
+      { preHandler: fastify.authenticate },
+      async (request) => {
+        const tenantId = requireTenantId(request);
+        const baseline = await mailboxService.getBaseline(tenantId, parseMailboxId(request.params.id));
+        return toSafeBaselineResponse(baseline);
       },
     );
   };

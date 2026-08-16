@@ -14,31 +14,40 @@ import { runMigrations } from "../../src/shared/db/index.js";
 import { createLogger } from "../../src/shared/logger/index.js";
 import {
   createTestDatabaseHandle,
+  createTestRedisHandle,
   ensureTestDatabaseExists,
+  flushTestRedis,
   resetSchema,
   truncateAppTables,
   type TestDatabaseHandle,
 } from "./support.js";
+import type { RedisClient } from "../../src/shared/redis/index.js";
 
 const testConfig = { ...loadConfig({ NODE_ENV: "test" }), log: { level: "silent" as const } };
 const silentLogger = createLogger({ level: "silent", serviceName: testConfig.service.name, env: testConfig.env });
 
 let handle: TestDatabaseHandle;
+let redis: RedisClient;
 
 beforeAll(async () => {
   await ensureTestDatabaseExists();
   handle = createTestDatabaseHandle();
+  redis = createTestRedisHandle();
   await resetSchema(handle.pool);
   await runMigrations(handle.pool, silentLogger);
 }, 30_000);
 
 beforeEach(async () => {
   await truncateAppTables(handle.pool);
+  await flushTestRedis(redis);
 });
 
 afterAll(async () => {
   if (handle) {
     await handle.database.close();
+  }
+  if (redis) {
+    redis.disconnect();
   }
 });
 
@@ -72,14 +81,14 @@ async function createMailboxViaApi(
 
 describe("authentication required", () => {
   it("rejects an unauthenticated create request", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const response = await app.inject({ method: "POST", url: "/api/v1/mailboxes", payload: {} });
     expect(response.statusCode).toBe(401);
     await app.close();
   });
 
   it("rejects an unauthenticated list request", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const response = await app.inject({ method: "GET", url: "/api/v1/mailboxes" });
     expect(response.statusCode).toBe(401);
     await app.close();
@@ -88,7 +97,7 @@ describe("authentication required", () => {
 
 describe("mailbox creation and retrieval", () => {
   it("creates a mailbox starting in PENDING — never claims CONNECTED", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey } = await bootstrapTenantAndCredential("Create Co");
 
     const response = await createMailboxViaApi(app, apiKey, { emailAddress: "new@example.com", provider: "GMAIL" });
@@ -102,7 +111,7 @@ describe("mailbox creation and retrieval", () => {
   });
 
   it("ignores a tenantId field in the body — the mailbox belongs to the authenticated tenant", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { tenant, apiKey } = await bootstrapTenantAndCredential("Real Tenant Co");
     const foreignTenantId = "11111111-1111-1111-1111-111111111111";
 
@@ -122,7 +131,7 @@ describe("mailbox creation and retrieval", () => {
   });
 
   it("rejects an invalid provider value", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey } = await bootstrapTenantAndCredential("Validation Co");
 
     const response = await createMailboxViaApi(app, apiKey, { emailAddress: "x@example.com", provider: "AOL" });
@@ -132,7 +141,7 @@ describe("mailbox creation and retrieval", () => {
   });
 
   it("lists only the authenticated tenant's mailboxes", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey } = await bootstrapTenantAndCredential("List Co");
     await createMailboxViaApi(app, apiKey, { emailAddress: "one@example.com", provider: "GMAIL" });
     await createMailboxViaApi(app, apiKey, { emailAddress: "two@example.com", provider: "SMTP_IMAP" });
@@ -149,7 +158,7 @@ describe("mailbox creation and retrieval", () => {
   });
 
   it("retrieves a single mailbox by id", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey } = await bootstrapTenantAndCredential("Get Co");
     const created = await createMailboxViaApi(app, apiKey, { emailAddress: "get@example.com", provider: "GMAIL" });
 
@@ -165,7 +174,7 @@ describe("mailbox creation and retrieval", () => {
   });
 
   it("returns 404 for a nonexistent mailbox id", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey } = await bootstrapTenantAndCredential("NotFound Co");
 
     const response = await app.inject({
@@ -181,7 +190,7 @@ describe("mailbox creation and retrieval", () => {
 
 describe("tenant isolation", () => {
   it("tenant A cannot retrieve tenant B's mailbox", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const tenantA = await bootstrapTenantAndCredential("Tenant A");
     const tenantB = await bootstrapTenantAndCredential("Tenant B");
     const mailboxB = await createMailboxViaApi(app, tenantB.apiKey, { emailAddress: "b@example.com", provider: "GMAIL" });
@@ -197,7 +206,7 @@ describe("tenant isolation", () => {
   });
 
   it("tenant A cannot connect tenant B's mailbox", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const tenantA = await bootstrapTenantAndCredential("Tenant A");
     const tenantB = await bootstrapTenantAndCredential("Tenant B");
     const mailboxB = await createMailboxViaApi(app, tenantB.apiKey, { emailAddress: "b2@example.com", provider: "GMAIL" });
@@ -213,7 +222,7 @@ describe("tenant isolation", () => {
   });
 
   it("tenant A cannot disable tenant B's mailbox, and B's mailbox is left untouched", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const tenantA = await bootstrapTenantAndCredential("Tenant A");
     const tenantB = await bootstrapTenantAndCredential("Tenant B");
     const mailboxB = await createMailboxViaApi(app, tenantB.apiKey, { emailAddress: "b3@example.com", provider: "GMAIL" });
@@ -237,7 +246,7 @@ describe("tenant isolation", () => {
 
 describe("connect/disconnect/enable/disable/capabilities", () => {
   it("connect never returns a fabricated CONNECTED mailbox — it returns a safe provider error and the mailbox lands in ERROR", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey } = await bootstrapTenantAndCredential("Connect Co");
     const created = await createMailboxViaApi(app, apiKey, { emailAddress: "connect@example.com", provider: "GMAIL" });
 
@@ -261,7 +270,7 @@ describe("connect/disconnect/enable/disable/capabilities", () => {
   });
 
   it("disconnect transitions ERROR -> DISCONNECTED and is idempotent", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey } = await bootstrapTenantAndCredential("Disconnect Co");
     const created = await createMailboxViaApi(app, apiKey, { emailAddress: "disc@example.com", provider: "GMAIL" });
     await app.inject({
@@ -289,7 +298,7 @@ describe("connect/disconnect/enable/disable/capabilities", () => {
   });
 
   it("enable/disable toggle and are idempotent", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey } = await bootstrapTenantAndCredential("Toggle Co");
     const created = await createMailboxViaApi(app, apiKey, { emailAddress: "toggle@example.com", provider: "GMAIL" });
     const mailboxId = created.json().id;
@@ -319,7 +328,7 @@ describe("connect/disconnect/enable/disable/capabilities", () => {
   });
 
   it("capabilities reflect the mailbox's provider type", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey } = await bootstrapTenantAndCredential("Capabilities Co");
     const created = await createMailboxViaApi(app, apiKey, {
       emailAddress: "caps@example.com",
@@ -343,7 +352,7 @@ describe("connect/disconnect/enable/disable/capabilities", () => {
 
 describe("security — no secret/internal leakage", () => {
   it("mailbox responses never include internal error details or a stack trace on connect failure", async () => {
-    const app = await buildApp(testConfig, silentLogger, handle.database);
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
     const { apiKey } = await bootstrapTenantAndCredential("Safe Error Co");
     const created = await createMailboxViaApi(app, apiKey, { emailAddress: "safe@example.com", provider: "GMAIL" });
 
