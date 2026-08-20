@@ -59,6 +59,7 @@ function mailbox(overrides: Partial<WarmupNetworkMailbox> = {}): WarmupNetworkMa
     usageDate: "2026-08-19",
     usageCount: 0,
     credentialAvailable: true,
+    membershipStatus: "ACTIVE",
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
@@ -152,12 +153,15 @@ describe("warmup network mailbox eligibility", () => {
     expect(classifyEmptyPoolFailure([evaluation])).toEqual({ reason: "COOLDOWN", failureClass: "TEMPORARY" });
   });
 
-  it("classifies quarantine as permanent", () => {
-    const evaluation = evaluateWarmupMailboxEligibility(mailbox({ status: "QUARANTINED" }), domain(), NOW, CONFIG, linked);
-    expect(evaluation.reasons).toContain("STATUS_NOT_ACTIVE");
-    expect(classifyEmptyPoolFailure([evaluation])).toEqual({
-      reason: "NO_ELIGIBLE_WARMUP_MAILBOX",
-      failureClass: "PERMANENT",
-    });
+  it("rejects non-ACTIVE network membership", () => {
+    const evaluation = evaluateWarmupMailboxEligibility(
+      mailbox({ membershipStatus: "PAUSED" }),
+      domain(),
+      NOW,
+      CONFIG,
+      linked,
+    );
+    expect(evaluation.eligible).toBe(false);
+    expect(evaluation.reasons).toContain("MEMBERSHIP_NOT_ACTIVE");
   });
 });

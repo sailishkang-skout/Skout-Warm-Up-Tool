@@ -64,6 +64,11 @@ import { createWarmupScheduler, type WarmupScheduler } from "../modules/warmup/a
 import { createWarmupService, type WarmupService } from "../modules/warmup/application/warmup-service.js";
 import { createAdapterWarmupSendProvider } from "../modules/warmup/infrastructure/adapter-warmup-send-provider.js";
 import { createWarmupNetworkRouter } from "../modules/warmup-network/application/warmup-network-router.js";
+import { createCustomerDomainService, type CustomerDomainService } from "../modules/customer-domains/application/customer-domain-service.js";
+import { createGoogleWorkspaceDirectoryProvider } from "../modules/managed-directory/infrastructure/google-workspace-directory-provider.js";
+import { createMicrosoft365DirectoryProvider } from "../modules/managed-directory/infrastructure/microsoft365-directory-provider.js";
+import { createMailboxProvisioningService, type MailboxProvisioningService } from "../modules/managed-directory/application/mailbox-provisioning-service.js";
+import { createKillSwitchService, type KillSwitchService } from "../modules/operations/application/kill-switch-service.js";
 import { createWarmupNetworkService, type WarmupNetworkService } from "../modules/warmup-network/application/warmup-network-service.js";
 import { PostgresWarmupNetworkRepository } from "../modules/warmup-network/infrastructure/postgres-warmup-network-repository.js";
 import { createWarmupPoolService, type WarmupPoolService } from "../modules/warmup-pool/application/warmup-pool-service.js";
@@ -104,6 +109,9 @@ export interface AppServices {
   readonly integrationEventRepository: IntegrationEventRepository;
   readonly warmupNetworkService: WarmupNetworkService;
   readonly warmupPoolService: WarmupPoolService;
+  readonly customerDomainService: CustomerDomainService;
+  readonly mailboxProvisioningService: MailboxProvisioningService;
+  readonly killSwitchService: KillSwitchService;
 }
 
 /**
@@ -248,6 +256,21 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
     auditRecorder,
   });
 
+  const killSwitchService = createKillSwitchService({
+    database,
+    auditRecorder,
+    envGlobalPause: config.warmupNetwork.globalKillSwitch,
+  });
+  const customerDomainService = createCustomerDomainService({ database, auditRecorder });
+  const mailboxProvisioningService = createMailboxProvisioningService({
+    database,
+    mailboxService,
+    auditRecorder,
+    directories: {
+      GMAIL: createGoogleWorkspaceDirectoryProvider(false),
+      MICROSOFT365: createMicrosoft365DirectoryProvider(false),
+    },
+  });
   const warmupNetworkRepository = new PostgresWarmupNetworkRepository(database);
   const warmupNetworkRouter = createWarmupNetworkRouter({
     database,
@@ -289,6 +312,7 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
       auditRecorder,
       warmupNetworkRouter,
       warmupNetworkRoutingMode: config.warmupNetwork.routingMode,
+      isExecutionPaused: () => killSwitchService.isGlobalPaused(),
     }),
     auditRecorder,
     logger,
@@ -426,5 +450,8 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
     integrationEventRepository,
     warmupNetworkService,
     warmupPoolService,
+    customerDomainService,
+    mailboxProvisioningService,
+    killSwitchService,
   };
 }

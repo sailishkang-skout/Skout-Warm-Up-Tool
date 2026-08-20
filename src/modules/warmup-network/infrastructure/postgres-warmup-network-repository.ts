@@ -7,6 +7,7 @@ import {
   asWarmupNetworkMailboxId,
   asWarmupNetworkPoolId,
   asWarmupNetworkRoutingDecisionId,
+  type TenantId,
   type WarmupNetworkDomainId,
   type WarmupNetworkMailboxId,
 } from "../../../shared/types/index.js";
@@ -61,6 +62,8 @@ interface MailboxRow {
   last_failure_at: Date | null;
   cooldown_until: Date | null;
   credential_available: boolean;
+  membership_status: import("../domain/warmup-network-mailbox.js").WarmupNetworkMembershipStatus;
+  owner_tenant_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -89,6 +92,7 @@ interface CandidateRow extends MailboxRow {
   linked_enabled: boolean;
   network_status: WarmupNetworkInfraStatus;
   pool_status: WarmupNetworkInfraStatus;
+  network_kind: "INTERNAL" | "PARTNER";
 }
 
 interface DecisionRow {
@@ -115,7 +119,7 @@ const MAILBOX_COLUMNS = `
   id, domain_id, pool_id, mailbox_id, provider, provider_mailbox_identifier, mailbox_address,
   status, health_score, reputation_state, daily_capacity, usage_date::text AS usage_date,
   usage_count, last_successful_interaction_at, last_failure_at, cooldown_until,
-  credential_available, created_at, updated_at
+  credential_available, membership_status, owner_tenant_id, created_at, updated_at
 `;
 
 function mapDomain(row: DomainRow): WarmupNetworkDomain {
@@ -161,6 +165,8 @@ function mapMailbox(row: MailboxRow): WarmupNetworkMailbox {
     ...(row.last_failure_at ? { lastFailureAt: row.last_failure_at } : {}),
     ...(row.cooldown_until ? { cooldownUntil: row.cooldown_until } : {}),
     credentialAvailable: row.credential_available,
+    membershipStatus: row.membership_status,
+    ...(row.owner_tenant_id ? { ownerTenantId: asTenantId(row.owner_tenant_id) } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -217,7 +223,7 @@ export class PostgresWarmupNetworkRepository implements WarmupNetworkRepository 
       `SELECT m.id, m.domain_id, m.pool_id, m.mailbox_id, m.provider, m.provider_mailbox_identifier, m.mailbox_address,
               m.status, m.health_score, m.reputation_state, m.daily_capacity, m.usage_date::text AS usage_date,
               m.usage_count, m.last_successful_interaction_at, m.last_failure_at, m.cooldown_until,
-              m.credential_available, m.created_at, m.updated_at,
+              m.credential_available, m.membership_status, m.owner_tenant_id, m.created_at, m.updated_at,
               d.id AS d_id, d.network_id AS d_network_id, d.pool_id AS d_pool_id, d.domain AS d_domain,
               d.provider AS d_provider, d.status AS d_status, d.authentication_status AS d_authentication_status,
               d.spf_status AS d_spf_status, d.dkim_status AS d_dkim_status, d.dmarc_status AS d_dmarc_status,
@@ -226,7 +232,7 @@ export class PostgresWarmupNetworkRepository implements WarmupNetworkRepository 
               d.usage_date::text AS d_usage_date, d.usage_count AS d_usage_count, d.cooldown_until AS d_cooldown_until,
               d.created_at AS d_created_at, d.updated_at AS d_updated_at,
               lm.status AS linked_status, lm.enabled AS linked_enabled,
-              n.status AS network_status, p.status AS pool_status
+              n.status AS network_status, n.kind AS network_kind, p.status AS pool_status
          FROM warmup_network_mailboxes m
          JOIN warmup_network_domains d ON d.id = m.domain_id
          JOIN warmup_network_pools p ON p.id = m.pool_id
@@ -262,6 +268,7 @@ export class PostgresWarmupNetworkRepository implements WarmupNetworkRepository 
       linkedMailboxEnabled: row.linked_enabled,
       networkStatus: row.network_status,
       poolStatus: row.pool_status,
+      networkKind: row.network_kind,
     }));
   }
 
@@ -386,6 +393,22 @@ export class PostgresWarmupNetworkRepository implements WarmupNetworkRepository 
 
   async getMailbox(id: WarmupNetworkMailboxId, client: DatabaseClient = this.db): Promise<WarmupNetworkMailbox | undefined> {
     const rows = await client.query<MailboxRow>(`SELECT ${MAILBOX_COLUMNS} FROM warmup_network_mailboxes WHERE id = $1`, [id]);
+    return rows[0] ? mapMailbox(rows[0]) : undefined;
+  }
+
+  async updateMembershipStatus(
+    id: WarmupNetworkMailboxId,
+    ownerTenantId: TenantId,
+    status: import("../domain/warmup-network-mailbox.js").WarmupNetworkMembershipStatus,
+  ): Promise<WarmupNetworkMailbox | undefined> {
+    const rows = await this.db.query<MailboxRow>(
+      `UPDATE warmup_network_mailboxes
+          SET membership_status = $3,
+              consent_revoked_at = CASE WHEN $3 IN ('REMOVED', 'SUSPENDED', 'PAUSED') THEN now() ELSE consent_revoked_at END
+        WHERE id = $1 AND owner_tenant_id = $2
+        RETURNING ${MAILBOX_COLUMNS}`,
+      [id, ownerTenantId, status],
+    );
     return rows[0] ? mapMailbox(rows[0]) : undefined;
   }
 

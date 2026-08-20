@@ -26,6 +26,8 @@ export const WARMUP_INELIGIBILITY_REASONS = [
   "CREDENTIAL_UNAVAILABLE",
   "LINKED_MAILBOX_NOT_READY",
   "PARENT_DOMAIN_INELIGIBLE",
+  "MEMBERSHIP_NOT_ACTIVE",
+  "NETWORK_KIND_EXCLUDED",
 ] as const;
 export type WarmupIneligibilityReason = (typeof WARMUP_INELIGIBILITY_REASONS)[number];
 
@@ -139,6 +141,9 @@ export function evaluateWarmupMailboxEligibility(
   }
   if (mailbox.reputationState === "POOR" || mailbox.reputationState === "CRITICAL") {
     reasons.push("REPUTATION_POOR_OR_CRITICAL");
+  }
+  if (mailbox.membershipStatus !== "ACTIVE") {
+    reasons.push("MEMBERSHIP_NOT_ACTIVE");
   }
   return { eligible: reasons.length === 0, reasons };
 }

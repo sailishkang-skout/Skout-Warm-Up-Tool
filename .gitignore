@@ -5,4 +5,4 @@ dist/
 !.env.example
 coverage/
 *.log
-.DS_Store
+.cursor/

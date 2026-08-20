@@ -1,4 +1,15 @@
-import type { MailboxId, WarmupNetworkDomainId, WarmupNetworkMailboxId, WarmupNetworkPoolId } from "../../../shared/types/index.js";
+import type { MailboxId, TenantId, WarmupNetworkDomainId, WarmupNetworkMailboxId, WarmupNetworkPoolId } from "../../../shared/types/index.js";
+
+export const WARMUP_NETWORK_MEMBERSHIP_STATUSES = [
+  "INVITED",
+  "PENDING_APPROVAL",
+  "ACTIVE",
+  "PAUSED",
+  "QUARANTINED",
+  "SUSPENDED",
+  "REMOVED",
+] as const;
+export type WarmupNetworkMembershipStatus = (typeof WARMUP_NETWORK_MEMBERSHIP_STATUSES)[number];
 import type {
   WarmupNetworkEntityStatus,
   WarmupNetworkProvider,
@@ -23,6 +34,8 @@ export interface WarmupNetworkMailbox {
   readonly lastFailureAt?: Date;
   readonly cooldownUntil?: Date;
   readonly credentialAvailable: boolean;
+  readonly membershipStatus: WarmupNetworkMembershipStatus;
+  readonly ownerTenantId?: TenantId;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }

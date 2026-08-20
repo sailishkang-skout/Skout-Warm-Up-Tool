@@ -29,6 +29,7 @@ export interface WarmupNetworkCandidate {
   readonly linkedMailboxEnabled: boolean;
   readonly networkStatus: WarmupNetworkInfraStatus;
   readonly poolStatus: WarmupNetworkInfraStatus;
+  readonly networkKind: "INTERNAL" | "PARTNER";
 }
 
 export interface InsertRoutingDecisionInput {
@@ -75,5 +76,10 @@ export interface WarmupNetworkRepository {
   getDomain(id: WarmupNetworkDomainId): Promise<WarmupNetworkDomain | undefined>;
   listMailboxes(): Promise<WarmupNetworkMailbox[]>;
   getMailbox(id: WarmupNetworkMailboxId, client?: DatabaseClient): Promise<WarmupNetworkMailbox | undefined>;
+  updateMembershipStatus(
+    id: WarmupNetworkMailboxId,
+    ownerTenantId: TenantId,
+    status: import("../domain/warmup-network-mailbox.js").WarmupNetworkMembershipStatus,
+  ): Promise<WarmupNetworkMailbox | undefined>;
   getHealth(): Promise<WarmupNetworkHealthSnapshot>;
 }

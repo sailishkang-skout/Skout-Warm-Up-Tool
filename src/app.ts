@@ -15,6 +15,9 @@ import { integrationEventRoutes } from "./modules/conversations/api/integration-
 import { warmupRoutes } from "./modules/warmup/api/warmup-routes.js";
 import { warmupNetworkRoutes } from "./modules/warmup-network/api/warmup-network-routes.js";
 import { warmupPoolRoutes } from "./modules/warmup-pool/api/warmup-pool-routes.js";
+import { customerDomainRoutes } from "./modules/customer-domains/api/customer-domain-routes.js";
+import { mailboxProvisioningRoutes } from "./modules/managed-directory/api/mailbox-provisioning-routes.js";
+import { operationsRoutes } from "./modules/operations/api/operations-routes.js";
 import { buildServices } from "./composition/build-services.js";
 import { authenticationPlugin } from "./plugins/authentication.js";
 import { errorHandlerPlugin } from "./plugins/error-handler.js";
@@ -80,6 +83,15 @@ export async function buildApp(config: AppConfig, logger: Logger, database: Data
   });
   await app.register(warmupPoolRoutes(services.warmupPoolService), {
     prefix: "/api/v1/warmup",
+  });
+  await app.register(customerDomainRoutes(services.customerDomainService), {
+    prefix: "/api/v1/domains",
+  });
+  await app.register(mailboxProvisioningRoutes(services.mailboxProvisioningService), {
+    prefix: "/api/v1/mailboxes",
+  });
+  await app.register(operationsRoutes(services.killSwitchService), {
+    prefix: "/api/v1/operations",
   });
 
   // "process is alive" — deliberately has no dependency on the database or

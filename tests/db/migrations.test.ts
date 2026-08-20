@@ -44,6 +44,7 @@ const ALL_MIGRATION_FILENAMES = [
   "028_integration_events_outbox_immutable.sql",
   "029_create_warmup_network.sql",
   "030_create_warmup_pools.sql",
+  "031_mailbox_infrastructure_control_plane.sql",
 ];
 
 let handle: TestDatabaseHandle;
@@ -112,6 +113,12 @@ describe("runMigrations", () => {
     await expect(handle.database.query("SELECT * FROM warmup_network_routing_decisions LIMIT 0")).resolves.toEqual([]);
     await expect(handle.database.query("SELECT * FROM warmup_pools LIMIT 0")).resolves.toEqual([]);
     await expect(handle.database.query("SELECT * FROM warmup_pool_memberships LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM customer_domains LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM organization_provider_accounts LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM operational_kill_switches LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM mailbox_provisioning_jobs LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT role, customer_domain_id FROM mailboxes LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT kind FROM warmup_networks LIMIT 0")).resolves.toEqual([]);
   });
 
   it("is idempotent — running it again applies nothing further", async () => {
@@ -136,7 +143,7 @@ describe("getMigrationStatus", () => {
   it("reports every migration as pending against an empty schema", async () => {
     const status = await getMigrationStatus(handle.pool);
     expect(status.every((entry) => !entry.applied)).toBe(true);
-    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
+    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]);
   });
 
   it("reports applied migrations with an appliedAt timestamp after running them", async () => {

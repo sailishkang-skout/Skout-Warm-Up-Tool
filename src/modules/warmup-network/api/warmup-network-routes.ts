@@ -67,7 +67,6 @@ function toSafeMailbox(mailbox: WarmupNetworkMailbox) {
     mailboxId: mailbox.mailboxId,
     provider: mailbox.provider,
     providerMailboxIdentifier: mailbox.providerMailboxIdentifier,
-    mailboxAddress: mailbox.mailboxAddress,
     status: mailbox.status,
     healthScore: mailbox.healthScore,
     reputationState: mailbox.reputationState,
@@ -120,5 +119,25 @@ export function warmupNetworkRoutes(service: WarmupNetworkService): FastifyPlugi
       requireTenantId(request);
       return service.getHealth();
     });
+
+    fastify.post<{ Params: { id: string } }>(
+      "/mailboxes/:id/pause",
+      { preHandler: fastify.authenticate },
+      async (request) => {
+        const tenantId = requireTenantId(request);
+        const mailbox = await service.pauseMembership(tenantId, parseMailboxId(request.params.id));
+        return toSafeMailbox(mailbox);
+      },
+    );
+
+    fastify.post<{ Params: { id: string } }>(
+      "/mailboxes/:id/quarantine",
+      { preHandler: fastify.authenticate },
+      async (request) => {
+        const tenantId = requireTenantId(request);
+        const mailbox = await service.quarantineMembership(tenantId, parseMailboxId(request.params.id));
+        return toSafeMailbox(mailbox);
+      },
+    );
   };
 }

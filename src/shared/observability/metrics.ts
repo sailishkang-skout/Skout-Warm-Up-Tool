@@ -65,4 +65,8 @@ export const METRIC = {
   warmupNetworkCapacityRemaining: "warmup_network.capacity.remaining",
   warmupNetworkMailboxSelected: "warmup_network.mailbox.selected",
   warmupNetworkDomainSelected: "warmup_network.domain.selected",
+  killSwitchActivated: "operations.kill_switch.activated",
+  mailboxProvisionAttempt: "provider_provision_attempt",
+  mailboxProvisionSuccess: "provider_provision_success",
+  mailboxProvisionFailure: "provider_provision_failure",
 } as const;

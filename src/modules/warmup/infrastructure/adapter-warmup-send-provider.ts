@@ -14,7 +14,7 @@ import { generateWarmupMessage } from "../domain/warmup-message.js";
 import type { ProviderSendResult, ProviderSendStatus } from "../domain/send-result.js";
 import type { SendWarmupMessageCommand, WarmupSendProvider } from "../application/warmup-send-provider.js";
 
-export type WarmupNetworkRoutingMode = "off" | "prefer" | "require";
+export type WarmupNetworkRoutingMode = "off" | "prefer" | "require" | "internal" | "partner" | "hybrid";
 
 export interface CreateAdapterWarmupSendProviderDeps {
   readonly mailboxService: MailboxService;
@@ -24,6 +24,7 @@ export interface CreateAdapterWarmupSendProviderDeps {
   readonly auditRecorder: AuditEventRecorder;
   readonly warmupNetworkRouter?: WarmupNetworkRouter;
   readonly warmupNetworkRoutingMode?: WarmupNetworkRoutingMode;
+  readonly isExecutionPaused?: () => Promise<boolean>;
 }
 
 // The provider-layer outcome vocabulary and warmup's own are identical in
@@ -91,10 +92,20 @@ export function createAdapterWarmupSendProvider(deps: CreateAdapterWarmupSendPro
     auditRecorder,
     warmupNetworkRouter,
     warmupNetworkRoutingMode = "off",
+    isExecutionPaused,
   } = deps;
 
   return {
     async sendWarmupMessage(command: SendWarmupMessageCommand): Promise<ProviderSendResult> {
+      if (isExecutionPaused && (await isExecutionPaused())) {
+        return {
+          status: "TEMPORARY_FAILURE",
+          provider: command.provider,
+          timestamp: new Date(),
+          retryable: true,
+          safeReason: "Execution is paused by an operational kill switch.",
+        };
+      }
       const adapter = providerRegistry.resolve(command.provider);
       if (!adapter.sendMessage) {
         return unavailable(command.provider, `${command.provider} does not support sending in this deployment yet.`);
@@ -161,7 +172,7 @@ export function createAdapterWarmupSendProvider(deps: CreateAdapterWarmupSendPro
         if (routed.selected) {
           toAddress = routed.selected.mailboxAddress;
           routedMailboxId = routed.selected.networkMailboxId;
-        } else if (warmupNetworkRoutingMode === "require") {
+        } else if (warmupNetworkRoutingMode !== "prefer") {
           const failureClass = routed.failureClass ?? "PERMANENT";
           return routingFailure(
             command.provider,

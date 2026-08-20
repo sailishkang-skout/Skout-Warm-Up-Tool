@@ -39,8 +39,11 @@ Pipeline (unchanged except optional recipient):
 | Mode | Behavior |
 |---|---|
 | `off` (default) | Self-send. **Does not query** network tables. Instant disable. |
-| `prefer` | Use a selected partner if eligible; otherwise self-send. Transitional. |
-| `require` | If none eligible, `TEMPORARY_FAILURE` (capacity/cooldown) or `PERMANENT_FAILURE` (empty, disabled, quarantined, disconnected customer). Never fall back to an unhealthy mailbox. Never self-send. |
+| `prefer` | Any eligible member; otherwise self-send. |
+| `require` | Any eligible member; else fail closed. |
+| `internal` | `kind=INTERNAL` only; fail closed. |
+| `partner` | `kind=PARTNER` only; fail closed. |
+| `hybrid` | INTERNAL + PARTNER; fail closed. |
 
 A routing infrastructure exception (DB) maps to `TEMPORARY_FAILURE` so the
 existing worker retries. Routing failure **must not** mark an intent SENT.
@@ -50,7 +53,7 @@ existing worker retries. Routing failure **must not** mark an intent SENT.
 
 Global (no `tenant_id` on network/pool/domain/mailbox rows):
 
-- `warmup_networks` — ACTIVE/DISABLED
+- `warmup_networks` — ACTIVE/DISABLED, `kind` INTERNAL\|PARTNER (031)
 - `warmup_network_pools` — default pool is enough
 - `warmup_network_domains` — unique domain, GMAIL|MICROSOFT365, health, auth, capacity
 - `warmup_network_mailboxes` — `mailbox_id` FK to existing `mailboxes` (credential reuse). **No tokens.**

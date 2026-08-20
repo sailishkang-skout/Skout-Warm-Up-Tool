@@ -49,7 +49,9 @@ export interface AppConfig {
     readonly policyPollIntervalMs: number;
   };
   readonly warmupNetwork: {
-    readonly routingMode: "off" | "prefer" | "require";
+    readonly routingMode: "off" | "prefer" | "require" | "internal" | "partner" | "hybrid";
+    readonly exposeRecipientAddresses: boolean;
+    readonly globalKillSwitch: boolean;
     readonly recentInteractionWindowMs: number;
     readonly defaultDailyCapacity: number;
     readonly minHealthScore: number;
@@ -187,6 +189,8 @@ function toAppConfig(env: EnvShape): AppConfig {
     },
     warmupNetwork: {
       routingMode: env.WARMUP_NETWORK_ROUTING_MODE,
+      exposeRecipientAddresses: env.WARMUP_NETWORK_EXPOSE_RECIPIENT_ADDRESSES === "true",
+      globalKillSwitch: env.WARMUP_KILL_SWITCH_GLOBAL === "true",
       recentInteractionWindowMs: env.WARMUP_NETWORK_RECENT_INTERACTION_WINDOW_MS,
       defaultDailyCapacity: env.WARMUP_NETWORK_DEFAULT_DAILY_CAPACITY,
       minHealthScore: env.WARMUP_NETWORK_MIN_HEALTH_SCORE,

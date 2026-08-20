@@ -119,7 +119,8 @@ describe("warmup network HTTP", () => {
 
     const mailboxes = await app.inject({ method: "GET", url: "/api/v1/warmup-network/mailboxes", headers });
     expect(mailboxes.statusCode).toBe(200);
-    expect(mailboxes.json().mailboxes[0].mailboxAddress).toBe("partner@skout-warmup.test");
+    expect(mailboxes.json().mailboxes[0].id).toBe(seeded.mailboxId);
+    expect(mailboxes.json().mailboxes[0].mailboxAddress).toBeUndefined();
     expect(mailboxes.json().mailboxes[0].credentialAvailable).toBe(true);
     expect(mailboxes.json().mailboxes[0]).not.toHaveProperty("accessToken");
     expect(JSON.stringify(mailboxes.json())).not.toMatch(/token|secret|password/i);

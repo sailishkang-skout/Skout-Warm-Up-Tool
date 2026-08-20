@@ -1,5 +1,5 @@
 import { NotFoundError } from "../../../shared/errors/index.js";
-import type { WarmupNetworkDomainId, WarmupNetworkMailboxId } from "../../../shared/types/index.js";
+import type { TenantId, WarmupNetworkDomainId, WarmupNetworkMailboxId } from "../../../shared/types/index.js";
 import type { WarmupNetworkDomain } from "../domain/warmup-network-domain.js";
 import type { WarmupNetworkMailbox } from "../domain/warmup-network-mailbox.js";
 import type { WarmupNetworkHealthSnapshot, WarmupNetworkRepository } from "./warmup-network-repository.js";
@@ -10,6 +10,8 @@ export interface WarmupNetworkService {
   listMailboxes(): Promise<WarmupNetworkMailbox[]>;
   getMailbox(id: WarmupNetworkMailboxId): Promise<WarmupNetworkMailbox>;
   getHealth(): Promise<WarmupNetworkHealthSnapshot>;
+  pauseMembership(tenantId: TenantId, id: WarmupNetworkMailboxId): Promise<WarmupNetworkMailbox>;
+  quarantineMembership(tenantId: TenantId, id: WarmupNetworkMailboxId): Promise<WarmupNetworkMailbox>;
 }
 
 export function createWarmupNetworkService(repository: WarmupNetworkRepository): WarmupNetworkService {
@@ -31,5 +33,19 @@ export function createWarmupNetworkService(repository: WarmupNetworkRepository):
       return mailbox;
     },
     getHealth: () => repository.getHealth(),
+    async pauseMembership(tenantId, id) {
+      const mailbox = await repository.updateMembershipStatus(id, tenantId, "PAUSED");
+      if (!mailbox) {
+        throw new NotFoundError("Warmup network mailbox not found");
+      }
+      return mailbox;
+    },
+    async quarantineMembership(tenantId, id) {
+      const mailbox = await repository.updateMembershipStatus(id, tenantId, "QUARANTINED");
+      if (!mailbox) {
+        throw new NotFoundError("Warmup network mailbox not found");
+      }
+      return mailbox;
+    },
   };
 }

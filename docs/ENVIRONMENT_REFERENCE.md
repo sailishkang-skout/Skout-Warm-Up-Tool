@@ -114,7 +114,7 @@ or safety-gate. Empty tables still mean there is no live partner fleet.
 
 | Name | Required | Default | Example | Security | API | Workers | Purpose |
 |---|---|---|---|---|---|---|---|
-| `WARMUP_NETWORK_ROUTING_MODE` | optional | `off` | `off` | public | yes | **warmup send** | `off` (self-send, no DB), `prefer` (route or self-send), `require` (fail closed). |
+| `WARMUP_NETWORK_ROUTING_MODE` | optional | `off` | `off` | public | yes | **warmup send** | `off` (self-send), `prefer` (route or self-send), `require`/`internal`/`partner`/`hybrid` (fail closed). |
 | `WARMUP_NETWORK_RECENT_INTERACTION_WINDOW_MS` | optional | `604800000` (7d) | `604800000` | public | yes | **warmup send** | Avoid recently used partners for this customer mailbox. |
 | `WARMUP_NETWORK_DEFAULT_DAILY_CAPACITY` | optional | `50` | `50` | public | loaded | loaded | Ops default for new rows; eligibility uses per-row `daily_capacity`. |
 | `WARMUP_NETWORK_MIN_HEALTH_SCORE` | optional (0–100) | `50` | `50` | public | yes | **warmup send** | Minimum domain/mailbox health to be eligible. |

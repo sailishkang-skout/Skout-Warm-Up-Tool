@@ -161,12 +161,16 @@ export function createWarmupNetworkRouter(deps: {
           }
 
           const candidates = await deps.repository.lockCandidatesForUpdate(client);
+          const allowedKinds = allowedNetworkKinds(deps.config.routingMode);
           const evaluated = candidates
             .filter((candidate) => candidate.mailbox.mailboxId !== input.customerMailboxId)
             .map((candidate) => {
               const extraReasons: string[] = [];
               if (candidate.networkStatus !== "ACTIVE" || candidate.poolStatus !== "ACTIVE") {
                 extraReasons.push("STATUS_NOT_ACTIVE");
+              }
+              if (allowedKinds && !allowedKinds.has(candidate.networkKind)) {
+                extraReasons.push("NETWORK_KIND_EXCLUDED");
               }
               const evaluation = evaluateWarmupMailboxEligibility(
                 candidate.mailbox,
@@ -338,3 +342,18 @@ export function createWarmupNetworkRouter(deps: {
 }
 
 export type { WarmupNetworkCandidate };
+
+function allowedNetworkKinds(
+  mode: AppConfig["warmupNetwork"]["routingMode"],
+): ReadonlySet<"INTERNAL" | "PARTNER"> | undefined {
+  if (mode === "internal") {
+    return new Set(["INTERNAL"]);
+  }
+  if (mode === "partner") {
+    return new Set(["PARTNER"]);
+  }
+  if (mode === "hybrid") {
+    return new Set(["INTERNAL", "PARTNER"]);
+  }
+  return undefined;
+}
