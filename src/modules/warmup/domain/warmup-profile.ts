@@ -30,6 +30,16 @@ export interface WarmupProfile {
   readonly riskTolerance: RiskTolerance;
   readonly active: boolean;
   readonly pauseConditions: readonly string[];
+  /**
+   * Minutes since local midnight (0-1439), evaluated against the
+   * mailbox's own `timezone` (Stage 12 — see `domain/send-window.ts`).
+   * Both present or both absent: unconfigured means no window
+   * restriction, preserving exactly the pre-Stage-12 behavior (a mailbox
+   * is eligible to send at any time) rather than forcing every existing
+   * profile into a default window nobody configured.
+   */
+  readonly windowStartMinute?: number;
+  readonly windowEndMinute?: number;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }

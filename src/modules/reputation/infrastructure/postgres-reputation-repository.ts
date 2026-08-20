@@ -2,6 +2,8 @@ import { expectOne, type DatabaseClient } from "../../../shared/db/index.js";
 import { asMailboxId, asReputationAssessmentId, asTenantId, type MailboxId, type TenantId } from "../../../shared/types/index.js";
 import type { CreateReputationAssessmentInput, ReputationRepository } from "../application/reputation-repository.js";
 import type {
+  DomainReputationSnapshot,
+  ProviderReputationSnapshot,
   ReputationAssessment,
   ReputationFactor,
   ReputationStatus,
@@ -20,12 +22,15 @@ interface ReputationAssessmentRow {
   last_24h: ReputationWindowEvidence;
   last_7d: ReputationWindowEvidence;
   lifetime: ReputationWindowEvidence;
+  provider_reputation: ProviderReputationSnapshot;
+  domain_reputation: DomainReputationSnapshot;
   assessed_at: Date;
   created_at: Date;
 }
 
 const SELECT_COLUMNS = `
-  id, tenant_id, mailbox_id, status, confidence, factors, trends, last_24h, last_7d, lifetime, assessed_at, created_at
+  id, tenant_id, mailbox_id, status, confidence, factors, trends, last_24h, last_7d, lifetime,
+  provider_reputation, domain_reputation, assessed_at, created_at
 `;
 
 function mapRow(row: ReputationAssessmentRow): ReputationAssessment {
@@ -40,6 +45,8 @@ function mapRow(row: ReputationAssessmentRow): ReputationAssessment {
     last24h: row.last_24h,
     last7d: row.last_7d,
     lifetime: row.lifetime,
+    providerReputation: row.provider_reputation,
+    domainReputation: row.domain_reputation,
     assessedAt: row.assessed_at,
     createdAt: row.created_at,
   };
@@ -51,8 +58,9 @@ export class PostgresReputationRepository implements ReputationRepository {
   async create(input: CreateReputationAssessmentInput): Promise<ReputationAssessment> {
     const rows = await this.db.query<ReputationAssessmentRow>(
       `INSERT INTO reputation_assessments
-         (tenant_id, mailbox_id, status, confidence, factors, trends, last_24h, last_7d, lifetime, assessed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         (tenant_id, mailbox_id, status, confidence, factors, trends, last_24h, last_7d, lifetime,
+          provider_reputation, domain_reputation, assessed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING ${SELECT_COLUMNS}`,
       [
         input.tenantId,
@@ -64,6 +72,8 @@ export class PostgresReputationRepository implements ReputationRepository {
         JSON.stringify(input.snapshot.last24h),
         JSON.stringify(input.snapshot.last7d),
         JSON.stringify(input.snapshot.lifetime),
+        JSON.stringify(input.snapshot.providerReputation),
+        JSON.stringify(input.snapshot.domainReputation),
         input.snapshot.assessedAt,
       ],
     );

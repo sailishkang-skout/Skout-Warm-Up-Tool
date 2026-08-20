@@ -34,6 +34,14 @@ const SEND_ENDPOINT = "https://gmail.googleapis.com/gmail/v1/users/me/messages/s
 // definition, something this adapter cannot confirm the outcome of.
 const SEND_TIMEOUT_MS = 15_000;
 
+// Stage 12.1 fallback only — production always supplies
+// `refreshTimeoutMs` from `config.providers.credentialRefreshTimeoutMs`
+// (see build-services.ts), sourced from `PROVIDER_CREDENTIAL_REFRESH_TIMEOUT_MS`
+// (shared/config/schema.ts). This default only matters for adapters
+// constructed without an explicit value (tests, or a future call site that
+// doesn't wire config through).
+const DEFAULT_REFRESH_TIMEOUT_MS = 10_000;
+
 /**
  * Minimum scopes to (a) resolve the authenticated identity for mismatch
  * checking (`openid`, `email`) and (b) let a mailbox eventually send/receive
@@ -59,6 +67,8 @@ export interface GmailAdapterOptions {
   readonly config?: GoogleOAuthConfig;
   /** Injectable for tests — defaults to the global `fetch`. Never mocked in production. */
   readonly fetchImpl?: typeof fetch;
+  /** Stage 12.1 — bounds `refreshAccessToken`'s network call. Defaults to `DEFAULT_REFRESH_TIMEOUT_MS`; production supplies `config.providers.credentialRefreshTimeoutMs`. */
+  readonly refreshTimeoutMs?: number;
 }
 
 interface GoogleTokenResponse {
@@ -131,10 +141,12 @@ export class GmailAdapter implements ProviderAdapter {
 
   private readonly config: GoogleOAuthConfig | undefined;
   private readonly fetchImpl: typeof fetch;
+  private readonly refreshTimeoutMs: number;
 
   constructor(options: GmailAdapterOptions = {}) {
     this.config = options.config;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.refreshTimeoutMs = options.refreshTimeoutMs ?? DEFAULT_REFRESH_TIMEOUT_MS;
     this.oauth = {
       getAuthorizationUrl: (request) => this.getAuthorizationUrl(request),
       exchangeCodeForTokens: (request) => this.exchangeCodeForTokens(request),
@@ -364,12 +376,29 @@ export class GmailAdapter implements ProviderAdapter {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: body.toString(),
+        // Stage 12.1: bounds this call so a hung token endpoint can never
+        // leave a credential refresh open indefinitely — the same
+        // reasoning SEND_TIMEOUT_MS already applies to the send call
+        // above, on an independent, separately-configured budget (refresh
+        // is a much smaller request/response than a send, and — unlike a
+        // send — is always safe to simply retry, so it doesn't need
+        // SEND_UNKNOWN's "outcome unconfirmable" treatment).
+        signal: AbortSignal.timeout(this.refreshTimeoutMs),
       });
     } catch (error) {
-      throw new ProviderError(PROVIDER_TYPE, "Could not reach Google to refresh the access token", {
-        retryable: true,
-        cause: error,
-      });
+      // `AbortSignal.timeout` firing rejects with a `DOMException` named
+      // "TimeoutError" (verified: distinct from a plain network failure,
+      // e.g. connection refused, which rejects with a different error
+      // shape) — classified separately so callers (`resolve-fresh-credential.ts`)
+      // can tell "the request never got a chance to complete" apart from
+      // other transient failures, even though both are equally retryable
+      // today.
+      const isTimeout = error instanceof Error && error.name === "TimeoutError";
+      throw new ProviderError(
+        PROVIDER_TYPE,
+        isTimeout ? "Timed out waiting for Google to refresh the access token" : "Could not reach Google to refresh the access token",
+        { retryable: true, details: { reason: isTimeout ? "timeout" : "network_failure" }, cause: error },
+      );
     }
 
     const parsed = (await response.json()) as GoogleTokenResponse;

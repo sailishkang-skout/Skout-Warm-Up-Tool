@@ -11,7 +11,15 @@ import type { ProviderSendResult, ProviderSendStatus } from "./send-result.js";
  */
 const RETRYABLE_STATUSES: ReadonlySet<ProviderSendStatus> = new Set(["RATE_LIMITED", "TEMPORARY_FAILURE"]);
 
-const MAX_ATTEMPTS = 5;
+/**
+ * Exported (Stage 12) so `infrastructure/postgres-warmup-execution-intent-repository.ts`'s
+ * lease-reclaim query can reuse the exact same bound rather than duplicating
+ * the number — a lease reclaimed after a worker crash still counts toward
+ * the same attempt ceiling a provider-classified retry does, so a
+ * persistently-crashing worker can never keep an intent cycling between
+ * `CLAIMED` and reclaimed-`PENDING` forever (see that file's `reclaimExpiredLeases`).
+ */
+export const MAX_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1_000;
 const MAX_DELAY_MS = 5 * 60_000;
 

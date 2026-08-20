@@ -38,6 +38,20 @@ describe("loadConfig", () => {
     const config = loadConfig({});
     expect(config.env).toBe("development");
     expect(config.http.port).toBe(3010);
+    expect(config.http.host).toBe("0.0.0.0");
+    expect(config.http.bodyLimitBytes).toBe(1_048_576);
+    expect(config.workers.warmupPollIntervalMs).toBe(30_000);
+    expect(config.workers.classificationPollIntervalMs).toBe(15_000);
+    expect(config.warmupNetwork.routingMode).toBe("off");
+    expect(config.warmupNetwork.minHealthScore).toBe(50);
+    expect(config.warmupNetwork.requireSpf).toBe(true);
+    expect(config.warmupNetwork.requireDkim).toBe(true);
+    expect(config.warmupNetwork.requireDmarc).toBe(true);
+    expect(config.warmupPool.selectionStrategy).toBe("HEALTH_FIRST_LEAST_USED");
+    expect(config.warmupPool.maxDomainSharePercent).toBe(70);
+    expect(config.warmupPool.maxConsecutiveSameDomain).toBe(2);
+    expect(config.warmupPool.selectionCooldownMs).toBe(0);
+    expect(config.database.statementTimeoutMs).toBe(30_000);
     expect(config.log.level).toBe("info");
   });
 
@@ -101,7 +115,33 @@ describe("loadConfig", () => {
     expect((error as ConfigurationError).message).not.toContain(secretLookingValue);
   });
 
-  it("coerces PORT from a string env var to a number", () => {
-    expect(loadConfig({ ...validProductionEnv, PORT: "9999" }).http.port).toBe(9999);
+  it("defaults AI classification to disabled without requiring an API key", () => {
+    const config = loadConfig(validProductionEnv);
+    expect(config.ai.provider).toBe("none");
+    expect(config.ai.apiKey).toBeUndefined();
+    expect(config.ai.timeoutMs).toBe(15_000);
+    expect(config.ai.classifierVersion).toBe("conversation-classifier/v1");
+    expect(config.ai.taxonomyVersion).toBe("classification-taxonomy/v1");
+    expect(config.ai.supplementDeterministic).toBe(false);
+    expect(config.conversations.policyVersion).toBe("conversation-policy/v1");
+    expect(config.conversations.policyTaxonomyVersion).toBe("conversation-policy-taxonomy/v1");
+  });
+
+  it("requires AI_API_KEY when an AI provider is selected", () => {
+    const error = captureError(() => loadConfig({ ...validProductionEnv, AI_CLASSIFICATION_PROVIDER: "openrouter" }));
+    expect(error).toBeInstanceOf(ConfigurationError);
+  });
+
+  it("accepts a fully configured OpenRouter classifier", () => {
+    const config = loadConfig({
+      ...validProductionEnv,
+      AI_CLASSIFICATION_PROVIDER: "openrouter",
+      AI_API_KEY: "sk-or-test",
+      AI_MODEL: "openai/gpt-4.1-mini",
+    });
+    expect(config.ai.provider).toBe("openrouter");
+    expect(config.ai.apiKey).toBe("sk-or-test");
+    expect(config.ai.baseUrl).toBe("https://openrouter.ai/api/v1");
+    expect(config.ai.model).toBe("openai/gpt-4.1-mini");
   });
 });

@@ -16,5 +16,7 @@ export default defineConfig({
     // running files in parallel races schema mutations against each other
     // (a dropped function used by another file's in-flight migration, etc).
     fileParallelism: false,
+    maxWorkers: 1,
+    pool: "forks",
   },
 });

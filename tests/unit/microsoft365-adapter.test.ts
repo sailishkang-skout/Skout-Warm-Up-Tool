@@ -79,6 +79,50 @@ describe("Microsoft365Adapter — configured", () => {
     await expect(transientAdapter.oauth.refreshAccessToken("token")).rejects.toMatchObject({ retryable: true });
   });
 
+  describe("refreshAccessToken timeout (Stage 12.1)", () => {
+    function timeoutError(): DOMException {
+      return new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    }
+
+    it("classifies a timed-out refresh distinctly: retryable, reason 'timeout'", async () => {
+      const fetchImpl = vi.fn().mockRejectedValue(timeoutError());
+      const adapter = new Microsoft365Adapter({ config: CONFIG, fetchImpl, refreshTimeoutMs: 50 });
+
+      await expect(adapter.oauth.refreshAccessToken("token")).rejects.toMatchObject({
+        retryable: true,
+        details: { reason: "timeout" },
+      });
+    });
+
+    it("a generic network failure is classified with reason 'network_failure', still retryable", async () => {
+      const fetchImpl = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+      const adapter = new Microsoft365Adapter({ config: CONFIG, fetchImpl });
+
+      await expect(adapter.oauth.refreshAccessToken("token")).rejects.toMatchObject({
+        retryable: true,
+        details: { reason: "network_failure" },
+      });
+    });
+
+    it("passes an AbortSignal to the token-endpoint fetch", async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ access_token: "at", expires_in: 3600 }));
+      const adapter = new Microsoft365Adapter({ config: CONFIG, fetchImpl, refreshTimeoutMs: 5_000 });
+
+      await adapter.oauth.refreshAccessToken("token");
+
+      const [, requestInit] = fetchImpl.mock.calls[0] as [string, RequestInit];
+      expect(requestInit.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it("a fast, successful refresh under a short configured timeout is never misclassified as a timeout", async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ access_token: "at-fast", expires_in: 3600 }));
+      const adapter = new Microsoft365Adapter({ config: CONFIG, fetchImpl, refreshTimeoutMs: 50 });
+
+      const tokenSet = await adapter.oauth.refreshAccessToken("token");
+      expect(tokenSet.accessToken).toBe("at-fast");
+    });
+  });
+
   it("validateConnection maps Graph /me responses to VALID/INVALID_CREDENTIAL/PROVIDER_ERROR", async () => {
     const healthyAdapter = new Microsoft365Adapter({
       config: CONFIG,

@@ -2,9 +2,18 @@ import { describe, expect, it } from "vitest";
 import { generateWarmupMessage } from "../../src/modules/warmup/domain/warmup-message.js";
 
 describe("generateWarmupMessage", () => {
-  it("addresses the message to the sending mailbox itself (self-send)", () => {
+  it("addresses the message to the sending mailbox itself (self-send) when toAddress is omitted", () => {
     const message = generateWarmupMessage({ fromAddress: "alice@example.com", idempotencyKey: "key-1" });
     expect(message.to).toBe("alice@example.com");
+  });
+
+  it("addresses the message to an explicit toAddress when provided", () => {
+    const message = generateWarmupMessage({
+      fromAddress: "alice@example.com",
+      toAddress: "partner@skout-network.test",
+      idempotencyKey: "key-1",
+    });
+    expect(message.to).toBe("partner@skout-network.test");
   });
 
   it("is deterministic — the same idempotencyKey always produces the same content", () => {

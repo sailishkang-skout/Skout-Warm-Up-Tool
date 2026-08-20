@@ -34,6 +34,11 @@ const GRAPH_SEND_MAIL_ENDPOINT = "https://graph.microsoft.com/v1.0/me/sendMail";
 // See GmailAdapter's identical constant for why this is bounded.
 const SEND_TIMEOUT_MS = 15_000;
 
+// See GmailAdapter's identical constant (Stage 12.1) — fallback only,
+// production supplies `refreshTimeoutMs` from
+// `config.providers.credentialRefreshTimeoutMs`.
+const DEFAULT_REFRESH_TIMEOUT_MS = 10_000;
+
 /**
  * Minimum scopes to (a) resolve the authenticated identity for mismatch
  * checking (`openid`, `email`) and (b) let a mailbox eventually send/receive
@@ -61,6 +66,8 @@ export interface Microsoft365AdapterOptions {
   readonly config?: MicrosoftOAuthConfig;
   /** Injectable for tests — defaults to the global `fetch`. Never mocked in production. */
   readonly fetchImpl?: typeof fetch;
+  /** Stage 12.1 — bounds `refreshAccessToken`'s network call. Defaults to `DEFAULT_REFRESH_TIMEOUT_MS`; production supplies `config.providers.credentialRefreshTimeoutMs`. */
+  readonly refreshTimeoutMs?: number;
 }
 
 interface MicrosoftTokenResponse {
@@ -121,10 +128,12 @@ export class Microsoft365Adapter implements ProviderAdapter {
 
   private readonly config: MicrosoftOAuthConfig | undefined;
   private readonly fetchImpl: typeof fetch;
+  private readonly refreshTimeoutMs: number;
 
   constructor(options: Microsoft365AdapterOptions = {}) {
     this.config = options.config;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.refreshTimeoutMs = options.refreshTimeoutMs ?? DEFAULT_REFRESH_TIMEOUT_MS;
     this.oauth = {
       getAuthorizationUrl: (request) => this.getAuthorizationUrl(request),
       exchangeCodeForTokens: (request) => this.exchangeCodeForTokens(request),
@@ -350,12 +359,18 @@ export class Microsoft365Adapter implements ProviderAdapter {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: body.toString(),
+        // See GmailAdapter's identical call (Stage 12.1) for the full
+        // reasoning — bounded, independent from SEND_TIMEOUT_MS, always
+        // safe to retry (unlike a send).
+        signal: AbortSignal.timeout(this.refreshTimeoutMs),
       });
     } catch (error) {
-      throw new ProviderError(PROVIDER_TYPE, "Could not reach Microsoft to refresh the access token", {
-        retryable: true,
-        cause: error,
-      });
+      const isTimeout = error instanceof Error && error.name === "TimeoutError";
+      throw new ProviderError(
+        PROVIDER_TYPE,
+        isTimeout ? "Timed out waiting for Microsoft to refresh the access token" : "Could not reach Microsoft to refresh the access token",
+        { retryable: true, details: { reason: isTimeout ? "timeout" : "network_failure" }, cause: error },
+      );
     }
 
     const parsed = (await response.json()) as MicrosoftTokenResponse;

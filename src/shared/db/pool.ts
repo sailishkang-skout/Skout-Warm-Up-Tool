@@ -10,12 +10,14 @@ import type { Logger } from "../logger/index.js";
  * common node-postgres foot-gun, so it's wired up unconditionally.
  */
 export function createPool(database: AppConfig["database"], logger: Logger): Pool {
+  const statementTimeoutMs = Math.max(0, Math.floor(database.statementTimeoutMs));
   const pool = new Pool({
     connectionString: database.url,
     min: database.poolMin,
     max: database.poolMax,
     connectionTimeoutMillis: database.connectionTimeoutMs,
     idleTimeoutMillis: database.idleTimeoutMs,
+    ...(statementTimeoutMs > 0 ? { options: `-c statement_timeout=${statementTimeoutMs}` } : {}),
   });
 
   pool.on("error", (error) => {

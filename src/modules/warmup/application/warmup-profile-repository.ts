@@ -10,6 +10,9 @@ export interface CreateWarmupProfileInput {
   readonly rampStrategy: RampStrategy;
   readonly riskTolerance: RiskTolerance;
   readonly pauseConditions?: readonly string[];
+  /** Both present or both absent — validated by `warmup-profile-service.ts` before this is ever called. */
+  readonly windowStartMinute?: number;
+  readonly windowEndMinute?: number;
 }
 
 /**
@@ -25,6 +28,9 @@ export interface UpdateWarmupProfileInput {
   readonly rampStrategy?: RampStrategy;
   readonly riskTolerance?: RiskTolerance;
   readonly pauseConditions?: readonly string[];
+  /** Both present or both absent — validated by `warmup-profile-service.ts`. Reconfigures the window; clearing an already-configured window back to "unrestricted" is not supported this stage (create a new profile, or set an always-open window, e.g. 0-1439). */
+  readonly windowStartMinute?: number;
+  readonly windowEndMinute?: number;
 }
 
 /** Port implemented by `infrastructure/postgres-warmup-profile-repository.ts`. One profile per mailbox (warmup_profiles_mailbox_unique). */

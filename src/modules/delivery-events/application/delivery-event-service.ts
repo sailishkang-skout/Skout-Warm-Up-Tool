@@ -42,6 +42,10 @@ export interface DeliveryEventService {
    */
   ingestDeliveryEvent(input: IngestDeliveryEventInput): Promise<IngestDeliveryEventResult>;
   getWindowStats(tenantId: TenantId, mailboxId: MailboxId, windowStart: Date, windowEnd: Date): Promise<DeliveryEventWindowStats>;
+  /** Stage 11: same window-stats shape, aggregated across every mailbox this tenant sends through `provider` instead of one mailbox. */
+  getProviderWindowStats(tenantId: TenantId, provider: MailboxProviderType, windowStart: Date, windowEnd: Date): Promise<DeliveryEventWindowStats>;
+  /** Stage 11: same window-stats shape, aggregated across every mailbox this tenant sends through the given sending domain. */
+  getDomainWindowStats(tenantId: TenantId, domain: string, windowStart: Date, windowEnd: Date): Promise<DeliveryEventWindowStats>;
 }
 
 export interface CreateDeliveryEventServiceDeps {
@@ -123,8 +127,22 @@ export function createDeliveryEventService(deps: CreateDeliveryEventServiceDeps)
 
     async getWindowStats(tenantId: TenantId, mailboxId: MailboxId, windowStart: Date, windowEnd: Date): Promise<DeliveryEventWindowStats> {
       const counts = await deliveryEventRepository.countByEventType(tenantId, mailboxId, windowStart, windowEnd);
-      const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
-      return { windowStart, windowEnd, counts, total };
+      return toWindowStats(windowStart, windowEnd, counts);
+    },
+
+    async getProviderWindowStats(tenantId: TenantId, provider: MailboxProviderType, windowStart: Date, windowEnd: Date): Promise<DeliveryEventWindowStats> {
+      const counts = await deliveryEventRepository.countByEventTypeForProvider(tenantId, provider, windowStart, windowEnd);
+      return toWindowStats(windowStart, windowEnd, counts);
+    },
+
+    async getDomainWindowStats(tenantId: TenantId, domain: string, windowStart: Date, windowEnd: Date): Promise<DeliveryEventWindowStats> {
+      const counts = await deliveryEventRepository.countByEventTypeForDomain(tenantId, domain, windowStart, windowEnd);
+      return toWindowStats(windowStart, windowEnd, counts);
     },
   };
+}
+
+function toWindowStats(windowStart: Date, windowEnd: Date, counts: Readonly<Record<DeliveryEventType, number>>): DeliveryEventWindowStats {
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  return { windowStart, windowEnd, counts, total };
 }

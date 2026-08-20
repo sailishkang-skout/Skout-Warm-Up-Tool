@@ -47,6 +47,7 @@ function makeMailbox(id: MailboxId, tenantId: TenantId, emailAddressCanonical: s
     provider: "GMAIL",
     status: "PENDING",
     enabled: true,
+    timezone: "UTC",
     createdAt: new Date(),
     updatedAt: new Date(),
   };

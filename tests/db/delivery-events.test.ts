@@ -302,3 +302,62 @@ describe("DeliveryEventService.getWindowStats", () => {
     expect(statsA.total).toBe(1);
   });
 });
+
+describe("DeliveryEventService.getProviderWindowStats / getDomainWindowStats (Stage 11)", () => {
+  it("getProviderWindowStats aggregates across every mailbox on that provider for the tenant", async () => {
+    const { tenant, mailbox: mailboxA } = await createTenantAndMailbox("provider-agg-a@example.com");
+    const mailboxB = await new PostgresMailboxRepository(handle.database).create({ tenantId: tenant.id, emailAddress: "provider-agg-b@example.com", provider: "GMAIL" });
+    const mailboxC = await new PostgresMailboxRepository(handle.database).create({ tenantId: tenant.id, emailAddress: "provider-agg-c@example.com", provider: "MICROSOFT365" });
+    const service = buildDeliveryEventService();
+    const now = new Date();
+
+    await service.ingestDeliveryEvent({ tenantId: tenant.id, mailboxId: mailboxA.id, provider: "GMAIL", providerEventId: "a", eventType: "DELIVERED", observedAt: now, source: "INTERNAL_API" });
+    await service.ingestDeliveryEvent({ tenantId: tenant.id, mailboxId: mailboxB.id, provider: "GMAIL", providerEventId: "b", eventType: "BOUNCED", observedAt: now, source: "INTERNAL_API" });
+    // Different provider — must not be counted in the GMAIL aggregate.
+    await service.ingestDeliveryEvent({ tenantId: tenant.id, mailboxId: mailboxC.id, provider: "MICROSOFT365", providerEventId: "c", eventType: "FAILED", observedAt: now, source: "INTERNAL_API" });
+
+    const stats = await service.getProviderWindowStats(tenant.id, "GMAIL", new Date(now.getTime() - 60_000), new Date(now.getTime() + 60_000));
+    expect(stats.counts.DELIVERED).toBe(1);
+    expect(stats.counts.BOUNCED).toBe(1);
+    expect(stats.counts.FAILED).toBe(0);
+    expect(stats.total).toBe(2);
+  });
+
+  it("getDomainWindowStats aggregates across every mailbox sharing that sending domain for the tenant", async () => {
+    const { tenant, mailbox: mailboxA } = await createTenantAndMailbox("domain-agg-a@shared.example.com");
+    const mailboxB = await new PostgresMailboxRepository(handle.database).create({ tenantId: tenant.id, emailAddress: "domain-agg-b@shared.example.com", provider: "MICROSOFT365" });
+    const mailboxC = await new PostgresMailboxRepository(handle.database).create({ tenantId: tenant.id, emailAddress: "domain-agg-c@other.example.com", provider: "GMAIL" });
+    const service = buildDeliveryEventService();
+    const now = new Date();
+
+    await service.ingestDeliveryEvent({ tenantId: tenant.id, mailboxId: mailboxA.id, provider: "GMAIL", providerEventId: "a", eventType: "DELIVERED", observedAt: now, source: "INTERNAL_API" });
+    await service.ingestDeliveryEvent({ tenantId: tenant.id, mailboxId: mailboxB.id, provider: "MICROSOFT365", providerEventId: "b", eventType: "COMPLAINT", observedAt: now, source: "INTERNAL_API" });
+    // Different sending domain — must not be counted in the shared.example.com aggregate.
+    await service.ingestDeliveryEvent({ tenantId: tenant.id, mailboxId: mailboxC.id, provider: "GMAIL", providerEventId: "c", eventType: "REJECTED", observedAt: now, source: "INTERNAL_API" });
+
+    const stats = await service.getDomainWindowStats(tenant.id, "shared.example.com", new Date(now.getTime() - 60_000), new Date(now.getTime() + 60_000));
+    expect(stats.counts.DELIVERED).toBe(1);
+    expect(stats.counts.COMPLAINT).toBe(1);
+    expect(stats.counts.REJECTED).toBe(0);
+    expect(stats.total).toBe(2);
+  });
+
+  it("both aggregates are tenant-isolated", async () => {
+    const { tenant: tenantA, mailbox: mailboxA } = await createTenantAndMailbox("iso-a@iso.example.com");
+    const tenantB = await new PostgresTenantRepository(handle.database).create({ name: "Isolated Provider Tenant B" });
+    const mailboxB = await new PostgresMailboxRepository(handle.database).create({ tenantId: tenantB.id, emailAddress: "iso-b@iso.example.com", provider: "GMAIL" });
+    const service = buildDeliveryEventService();
+    const now = new Date();
+
+    await service.ingestDeliveryEvent({ tenantId: tenantA.id, mailboxId: mailboxA.id, provider: "GMAIL", providerEventId: "a", eventType: "DELIVERED", observedAt: now, source: "INTERNAL_API" });
+    await service.ingestDeliveryEvent({ tenantId: tenantB.id, mailboxId: mailboxB.id, provider: "GMAIL", providerEventId: "b", eventType: "BOUNCED", observedAt: now, source: "INTERNAL_API" });
+
+    const providerStatsA = await service.getProviderWindowStats(tenantA.id, "GMAIL", new Date(now.getTime() - 60_000), new Date(now.getTime() + 60_000));
+    expect(providerStatsA.total).toBe(1);
+    expect(providerStatsA.counts.BOUNCED).toBe(0);
+
+    const domainStatsA = await service.getDomainWindowStats(tenantA.id, "iso.example.com", new Date(now.getTime() - 60_000), new Date(now.getTime() + 60_000));
+    expect(domainStatsA.total).toBe(1);
+    expect(domainStatsA.counts.BOUNCED).toBe(0);
+  });
+});

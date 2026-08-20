@@ -1,0 +1,35 @@
+import { NotFoundError } from "../../../shared/errors/index.js";
+import type { WarmupNetworkDomainId, WarmupNetworkMailboxId } from "../../../shared/types/index.js";
+import type { WarmupNetworkDomain } from "../domain/warmup-network-domain.js";
+import type { WarmupNetworkMailbox } from "../domain/warmup-network-mailbox.js";
+import type { WarmupNetworkHealthSnapshot, WarmupNetworkRepository } from "./warmup-network-repository.js";
+
+export interface WarmupNetworkService {
+  listDomains(): Promise<WarmupNetworkDomain[]>;
+  getDomain(id: WarmupNetworkDomainId): Promise<WarmupNetworkDomain>;
+  listMailboxes(): Promise<WarmupNetworkMailbox[]>;
+  getMailbox(id: WarmupNetworkMailboxId): Promise<WarmupNetworkMailbox>;
+  getHealth(): Promise<WarmupNetworkHealthSnapshot>;
+}
+
+export function createWarmupNetworkService(repository: WarmupNetworkRepository): WarmupNetworkService {
+  return {
+    listDomains: () => repository.listDomains(),
+    async getDomain(id) {
+      const domain = await repository.getDomain(id);
+      if (!domain) {
+        throw new NotFoundError("Warmup network domain not found");
+      }
+      return domain;
+    },
+    listMailboxes: () => repository.listMailboxes(),
+    async getMailbox(id) {
+      const mailbox = await repository.getMailbox(id);
+      if (!mailbox) {
+        throw new NotFoundError("Warmup network mailbox not found");
+      }
+      return mailbox;
+    },
+    getHealth: () => repository.getHealth(),
+  };
+}

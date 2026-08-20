@@ -80,14 +80,17 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   }
   isShuttingDown = true;
 
-  logger.info({ signal }, "Received shutdown signal, closing gracefully");
+  logger.info({ signal, shutdownTimeoutMs: config.http.shutdownTimeoutMs }, "Received shutdown signal, closing gracefully");
+  const forceExit = setTimeout(() => {
+    logger.error({ shutdownTimeoutMs: config.http.shutdownTimeoutMs }, "Shutdown timed out — exiting");
+    process.exit(1);
+  }, config.http.shutdownTimeoutMs);
+  forceExit.unref();
   try {
-    // app.close() stops accepting new connections and waits for in-flight
-    // requests before resolving, so the database/Redis are only closed once
-    // nothing can issue a query/command against them anymore.
     await app.close();
     await database.close();
     await redis.quit();
+    clearTimeout(forceExit);
     logger.info("Shutdown complete");
     process.exit(0);
   } catch (error) {
@@ -102,7 +105,7 @@ process.on("SIGINT", () => void shutdown("SIGINT"));
 try {
   await app.listen({
     port: config.http.port,
-    host: "0.0.0.0",
+    host: config.http.host,
   });
 } catch (error) {
   app.log.error(error);

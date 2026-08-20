@@ -55,10 +55,45 @@ export const RISK_FACTOR_WEIGHTS = {
   DEGRADING_DELIVERY_TREND: 10,
   DEGRADING_BOUNCE_TREND: 10,
   DEGRADING_PROVIDER_TREND: 10,
+  /**
+   * Stage 11 spec section 6 — provider-scoped and domain-scoped reputation
+   * factors (aggregated across every mailbox this tenant sends through that
+   * provider/domain, see `reputation/domain/reputation-assessment.ts`'s
+   * `ProviderReputationSnapshot`/`DomainReputationSnapshot`). Weighted at
+   * roughly half the mailbox-level equivalent above: this evidence is
+   * genuinely relevant context (a provider-wide or domain-wide delivery
+   * problem is real signal) but is one step removed from "this specific
+   * mailbox is unsafe" — a mailbox with a perfectly clean history sharing a
+   * struggling provider/domain should see elevated risk, but never as much
+   * as if the problem were its own. Every single value here (max 15) is
+   * nowhere near the CRITICAL threshold (70) alone — "no single weak
+   * provider/domain signal can independently force CRITICAL" (Stage 11
+   * spec section 6) — reaching CRITICAL from provider/domain evidence alone
+   * still requires several corroborating factors, exactly like mailbox-level
+   * reputation already does.
+   */
+  PROVIDER_HIGH_BOUNCE_RATE: 15,
+  PROVIDER_HIGH_HARD_BOUNCE_RATE: 15,
+  PROVIDER_HIGH_THROTTLE_RATE: 15,
+  PROVIDER_HIGH_PROVIDER_REJECTION_RATE: 15,
+  PROVIDER_HIGH_FAILURE_RATE: 15,
+  PROVIDER_COMPLAINT_SIGNAL: 15,
+  PROVIDER_DEGRADING_DELIVERY_TREND: 5,
+  PROVIDER_DEGRADING_BOUNCE_TREND: 5,
+  PROVIDER_DEGRADING_PROVIDER_TREND: 5,
+  DOMAIN_HIGH_BOUNCE_RATE: 15,
+  DOMAIN_HIGH_HARD_BOUNCE_RATE: 15,
+  DOMAIN_HIGH_THROTTLE_RATE: 15,
+  DOMAIN_HIGH_PROVIDER_REJECTION_RATE: 15,
+  DOMAIN_HIGH_FAILURE_RATE: 15,
+  DOMAIN_COMPLAINT_SIGNAL: 15,
+  DOMAIN_DEGRADING_DELIVERY_TREND: 5,
+  DOMAIN_DEGRADING_BOUNCE_TREND: 5,
+  DOMAIN_DEGRADING_PROVIDER_TREND: 5,
 } as const;
 
-/** Reputation's own factor codes this policy recognizes and re-weights as risk factors — everything else on a `ReputationAssessment` is ignored here (Stage 10 spec section 10: risk only ever reads reputation's `factors`, never its raw window evidence). */
-const REPUTATION_RISK_FACTOR_CODES: ReadonlySet<string> = new Set([
+/** Base reputation factor codes (unprefixed) — mirrored with `PROVIDER_`/`DOMAIN_` prefixes below for the two Stage 11 aggregation scopes, so the allowlist is never hand-duplicated three times. */
+const REPUTATION_FACTOR_BASE_CODES = [
   "HIGH_BOUNCE_RATE",
   "HIGH_HARD_BOUNCE_RATE",
   "HIGH_THROTTLE_RATE",
@@ -68,7 +103,14 @@ const REPUTATION_RISK_FACTOR_CODES: ReadonlySet<string> = new Set([
   "DEGRADING_DELIVERY_TREND",
   "DEGRADING_BOUNCE_TREND",
   "DEGRADING_PROVIDER_TREND",
-]);
+] as const;
+
+/** Reputation's own factor codes this policy recognizes and re-weights as risk factors — everything else on a `ReputationAssessment` is ignored here (Stage 10 spec section 10: risk only ever reads reputation's `factors`, never its raw window evidence). */
+const REPUTATION_RISK_FACTOR_CODES: ReadonlySet<string> = new Set(REPUTATION_FACTOR_BASE_CODES);
+/** Stage 11: `ProviderReputationSnapshot.factors` codes. */
+const PROVIDER_REPUTATION_RISK_FACTOR_CODES: ReadonlySet<string> = new Set(REPUTATION_FACTOR_BASE_CODES.map((code) => `PROVIDER_${code}`));
+/** Stage 11: `DomainReputationSnapshot.factors` codes. */
+const DOMAIN_REPUTATION_RISK_FACTOR_CODES: ReadonlySet<string> = new Set(REPUTATION_FACTOR_BASE_CODES.map((code) => `DOMAIN_${code}`));
 
 const RISK_LEVEL_THRESHOLDS: ReadonlyArray<{ readonly minScore: number; readonly level: RiskLevel }> = [
   { minScore: 70, level: "CRITICAL" },
@@ -134,6 +176,20 @@ export function evaluateRisk(input: RiskPolicyInput, assessedAt: Date): RiskAsse
         riskFactors.push(factor(reputationFactor.code as keyof typeof RISK_FACTOR_WEIGHTS, reputationFactor.description, reputationFactor.severity));
       }
     }
+    // Stage 11 spec section 6/7: provider/domain evidence flows into the
+    // same existing risk boundary, never a second engine — read here
+    // exactly like mailbox-level factors above, just gated by their own
+    // (lower-weighted) allowlist.
+    for (const providerFactor of input.reputation.providerReputation.factors) {
+      if (PROVIDER_REPUTATION_RISK_FACTOR_CODES.has(providerFactor.code)) {
+        riskFactors.push(factor(providerFactor.code as keyof typeof RISK_FACTOR_WEIGHTS, providerFactor.description, providerFactor.severity));
+      }
+    }
+    for (const domainFactor of input.reputation.domainReputation.factors) {
+      if (DOMAIN_REPUTATION_RISK_FACTOR_CODES.has(domainFactor.code)) {
+        riskFactors.push(factor(domainFactor.code as keyof typeof RISK_FACTOR_WEIGHTS, domainFactor.description, domainFactor.severity));
+      }
+    }
   }
 
   const healthAllUnknown =
@@ -142,7 +198,9 @@ export function evaluateRisk(input: RiskPolicyInput, assessedAt: Date): RiskAsse
     health.sending === "UNKNOWN" &&
     health.receiving === "UNKNOWN" &&
     !input.domainAssessed;
-  const reputationKnown = input.reputation !== undefined && input.reputation.status !== "UNKNOWN";
+  const reputationKnown =
+    input.reputation !== undefined &&
+    (input.reputation.status !== "UNKNOWN" || input.reputation.providerReputation.status !== "UNKNOWN" || input.reputation.domainReputation.status !== "UNKNOWN");
   const allUnknown = healthAllUnknown && !reputationKnown;
 
   if (allUnknown) {

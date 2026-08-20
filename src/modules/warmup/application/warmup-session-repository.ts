@@ -51,4 +51,17 @@ export interface WarmupSessionRepository {
     day: number,
     volume: number,
   ): Promise<{ readonly session: WarmupSession; readonly allocatedSlot: number } | undefined>;
+  /**
+   * Cross-tenant background-scan candidates (Stage 12) — deliberately not
+   * tenant-scoped, same reasoning `WarmupExecutionIntentRepository.claimNext`
+   * already establishes: a scheduler is a background process considering
+   * every tenant's due work, not one tenant's. `last_decision_at < today's
+   * UTC midnight` is a cheap, correct-enough pre-filter (any session whose
+   * last decision predates today is a candidate); the caller
+   * (`application/warmup-scheduler.ts`) still re-derives the authoritative
+   * "is it actually due" answer via `domain/warmup-day.ts`'s
+   * `computeWarmupDay` per candidate before acting — this method never
+   * duplicates that domain calculation in SQL.
+   */
+  findActiveSessionsDueForDecision(beforeUtcMidnight: Date, limit: number): Promise<WarmupSession[]>;
 }

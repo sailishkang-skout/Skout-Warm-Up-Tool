@@ -43,6 +43,12 @@ function toSafeReputationResponse(assessment: ReputationAssessment) {
     last24h: assessment.last24h,
     last7d: assessment.last7d,
     lifetime: assessment.lifetime,
+    // Stage 11: visibility into the provider/domain-scoped evidence that
+    // also feeds this mailbox's risk assessment (see risk/README.md) — the
+    // same derived-output-only rule applies: full structured evidence, but
+    // never the internal threshold constants that produced it.
+    providerReputation: assessment.providerReputation,
+    domainReputation: assessment.domainReputation,
     assessedAt: assessment.assessedAt.toISOString(),
   };
 }

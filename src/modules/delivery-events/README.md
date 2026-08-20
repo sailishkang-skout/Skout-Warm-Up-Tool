@@ -56,5 +56,15 @@ itself (Stage 10 spec section 4).
   pattern `postgres-audit-event-recorder.ts` already uses).
 - Append-only (`migrations/018_create_delivery_events.sql`) — no
   update/delete method exists on `DeliveryEventRepository` at all.
+- **Stage 11**: `countByEventTypeForProvider`/`countByEventTypeForDomain`
+  (and their `DeliveryEventService` counterparts
+  `getProviderWindowStats`/`getDomainWindowStats`) aggregate across every
+  mailbox a tenant sends through a given provider or sending domain, for
+  `reputation`'s provider-/domain-level assessment (see
+  `reputation/README.md`). Still one grouped-aggregate query each, always
+  tenant-scoped; the domain variant joins to `mailboxes` rather than adding
+  a domain column to this table. No new index — the existing `tenant_id`
+  index already bounds these scans to a realistic size for this system's
+  volumes (Stage 11 spec: "avoid speculative indexes").
 
-**Target stage**: Stage 10.
+**Target stage**: Stage 10, Stage 11 (provider/domain aggregation methods).

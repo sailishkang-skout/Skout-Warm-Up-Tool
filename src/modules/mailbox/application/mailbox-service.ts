@@ -4,8 +4,9 @@ import type { ProviderCredentialStore } from "../../providers/application/provid
 import type { ProviderAccountRepository } from "../../providers/application/provider-account-repository.js";
 import type { ProviderRegistry } from "../../providers/application/provider-registry.js";
 import type { ProviderCapabilities } from "../../providers/domain/provider-capabilities.js";
-import { DatabaseError, NotFoundError, ProviderError } from "../../../shared/errors/index.js";
+import { DatabaseError, NotFoundError, ProviderError, ValidationError } from "../../../shared/errors/index.js";
 import type { Database, DatabaseClient } from "../../../shared/db/index.js";
+import { isValidIanaTimezone } from "../../../shared/time/index.js";
 import type { MailboxId, TenantId } from "../../../shared/types/index.js";
 import { assertValidMailboxTransition } from "../domain/mailbox-lifecycle.js";
 import type { Mailbox, MailboxProviderType, MailboxStatus } from "../domain/mailbox.js";
@@ -15,6 +16,8 @@ export interface CreateMailboxInput {
   readonly emailAddress: string;
   readonly provider: MailboxProviderType;
   readonly displayName?: string;
+  /** IANA identifier (e.g. `"America/New_York"`) — validated here via `Intl`, defaults to `"UTC"` when omitted (Stage 12). */
+  readonly timezone?: string;
 }
 
 /** Safe, non-secret fields only — see src/modules/providers/domain/provider-health.ts for `status`'s meaning. */
@@ -75,7 +78,9 @@ export interface MailboxService {
   disableMailbox(tenantId: TenantId, mailboxId: MailboxId): Promise<Mailbox>;
   getCapabilities(tenantId: TenantId, mailboxId: MailboxId): Promise<ProviderCapabilities>;
   getConnectionSnapshot(tenantId: TenantId, mailboxId: MailboxId): Promise<ConnectionSnapshot>;
+  /** Also refreshes a near-expired credential first, like `connectMailbox` — can likewise throw `ProviderError` (Stage 12.1: including a bounded, retryable timeout) if that refresh fails transiently. The global error-handler plugin converts it to a safe response; no route-level handling needed. */
   getConnectionHealth(tenantId: TenantId, mailboxId: MailboxId): Promise<ConnectionHealthSnapshot>;
+  /** Same credential-refresh behavior/exceptions as `getConnectionHealth`. */
   getBaseline(tenantId: TenantId, mailboxId: MailboxId): Promise<MailboxBaseline>;
 }
 
@@ -124,6 +129,16 @@ export function createMailboxService(deps: CreateMailboxServiceDeps): MailboxSer
     // convention — a mailbox left without one after a partial failure
     // would violate the architectural model this stage establishes.
     async createMailbox(tenantId: TenantId, input: CreateMailboxInput): Promise<Mailbox> {
+      // Stage 12: validated here (Intl-backed, see shared/time/timezone.ts)
+      // rather than only at the database CHECK-constraint layer — SQL has
+      // no practical way to validate the ~400-entry IANA zone list, so this
+      // is the one and only gate. A missing timezone is not an error; it
+      // defaults to "UTC" at the repository/database layer, preserving
+      // exactly the pre-Stage-12 UTC-only behavior.
+      if (input.timezone !== undefined && !isValidIanaTimezone(input.timezone)) {
+        throw new ValidationError(`'${input.timezone}' is not a recognized IANA timezone identifier`);
+      }
+
       const mailbox = await database.withTransaction(async (tx) => {
         const mailboxRepository = mailboxRepositoryFactory(tx);
         const providerAccountRepository = providerAccountRepositoryFactory(tx);
@@ -133,6 +148,7 @@ export function createMailboxService(deps: CreateMailboxServiceDeps): MailboxSer
           emailAddress: input.emailAddress,
           provider: input.provider,
           ...(input.displayName ? { displayName: input.displayName } : {}),
+          ...(input.timezone ? { timezone: input.timezone } : {}),
         });
 
         await providerAccountRepository.create({

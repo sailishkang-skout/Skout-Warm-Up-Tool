@@ -11,6 +11,9 @@ export interface WarmupProfileConfigValues {
   readonly rampStrategy: RampStrategy;
   readonly riskTolerance: RiskTolerance;
   readonly pauseConditions?: readonly string[];
+  /** Minutes since local midnight (0-1439), evaluated against the mailbox's own timezone — both present or both absent (Stage 12). */
+  readonly windowStartMinute?: number;
+  readonly windowEndMinute?: number;
 }
 
 export interface WarmupProfileService {
@@ -44,6 +47,30 @@ function assertValidBounds(values: { startingDailyVolume: number; targetDailyVol
   }
 }
 
+const MINUTES_PER_DAY = 1440;
+
+/**
+ * Both-or-neither, each in `[0, 1439]` (Stage 12). Equal start/end is
+ * accepted (a deliberate "never send" configuration — see
+ * `domain/send-window.ts`); `windowEndMinute <= windowStartMinute` is a
+ * valid overnight window, not an error, so no ordering check here beyond
+ * range bounds.
+ */
+function assertValidWindow(values: { windowStartMinute?: number; windowEndMinute?: number }): void {
+  const { windowStartMinute, windowEndMinute } = values;
+  if ((windowStartMinute === undefined) !== (windowEndMinute === undefined)) {
+    throw new ValidationError("windowStartMinute and windowEndMinute must be set together, or not at all");
+  }
+  for (const [name, value] of [
+    ["windowStartMinute", windowStartMinute],
+    ["windowEndMinute", windowEndMinute],
+  ] as const) {
+    if (value !== undefined && (!Number.isInteger(value) || value < 0 || value >= MINUTES_PER_DAY)) {
+      throw new ValidationError(`${name} must be an integer between 0 and ${MINUTES_PER_DAY - 1}`);
+    }
+  }
+}
+
 export function createWarmupProfileService(deps: CreateWarmupProfileServiceDeps): WarmupProfileService {
   const { mailboxService, warmupProfileRepository } = deps;
 
@@ -56,6 +83,7 @@ export function createWarmupProfileService(deps: CreateWarmupProfileServiceDeps)
     async createProfile(tenantId, mailboxId, input) {
       await mailboxService.getMailbox(tenantId, mailboxId);
       assertValidBounds(input);
+      assertValidWindow(input);
 
       const existing = await warmupProfileRepository.findByMailboxId(tenantId, mailboxId);
       if (existing) {
@@ -71,6 +99,7 @@ export function createWarmupProfileService(deps: CreateWarmupProfileServiceDeps)
         rampStrategy: input.rampStrategy,
         riskTolerance: input.riskTolerance,
         ...(input.pauseConditions ? { pauseConditions: input.pauseConditions } : {}),
+        ...(input.windowStartMinute !== undefined ? { windowStartMinute: input.windowStartMinute, windowEndMinute: input.windowEndMinute } : {}),
       });
     },
 
@@ -86,6 +115,7 @@ export function createWarmupProfileService(deps: CreateWarmupProfileServiceDeps)
         targetDailyVolume: input.targetDailyVolume ?? current.targetDailyVolume,
         maximumDailyVolume: input.maximumDailyVolume ?? current.maximumDailyVolume,
       });
+      assertValidWindow(input);
 
       return warmupProfileRepository.update(tenantId, mailboxId, input);
     },

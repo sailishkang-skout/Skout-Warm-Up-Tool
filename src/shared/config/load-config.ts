@@ -8,7 +8,7 @@ export interface AppConfig {
   readonly isDevelopment: boolean;
   readonly isTest: boolean;
   readonly service: { readonly name: string; readonly version: string };
-  readonly http: { readonly port: number };
+    readonly http: { readonly port: number; readonly host: string; readonly bodyLimitBytes: number; readonly shutdownTimeoutMs: number };
   readonly log: { readonly level: LogLevelName };
   readonly database: {
     readonly url: string;
@@ -16,14 +16,68 @@ export interface AppConfig {
     readonly poolMax: number;
     readonly connectionTimeoutMs: number;
     readonly idleTimeoutMs: number;
+    readonly statementTimeoutMs: number;
   };
   readonly redis: { readonly url: string };
   readonly security: { readonly encryptionKey: string; readonly apiKeyPepper: string };
   readonly providers: {
     readonly google?: { readonly clientId: string; readonly clientSecret: string; readonly redirectUri: string };
     readonly microsoft?: { readonly clientId: string; readonly clientSecret: string; readonly redirectUri: string };
+    /** Stage 12.1 — see schema.ts's `PROVIDER_CREDENTIAL_REFRESH_TIMEOUT_MS` doc comment. Applies to every OAuth-capable adapter, not per-provider, since both currently share the same reasoning. */
+    readonly credentialRefreshTimeoutMs: number;
+  };
+  readonly ai: {
+    readonly provider: "none" | "openai" | "openrouter";
+    readonly apiKey?: string;
+    readonly baseUrl: string;
+    readonly model: string;
+    readonly timeoutMs: number;
+    readonly maxInputChars: number;
+    readonly maxOutputChars: number;
+    readonly classifierVersion: string;
+    readonly taxonomyVersion: string;
+    readonly supplementDeterministic: boolean;
+  };
+  readonly conversations: {
+    readonly policyVersion: string;
+    readonly policyTaxonomyVersion: string;
+  };
+  readonly workers: {
+    readonly warmupPollIntervalMs: number;
+    readonly inboundPollIntervalMs: number;
+    readonly classificationPollIntervalMs: number;
+    readonly policyPollIntervalMs: number;
+  };
+  readonly warmupNetwork: {
+    readonly routingMode: "off" | "prefer" | "require";
+    readonly recentInteractionWindowMs: number;
+    readonly defaultDailyCapacity: number;
+    readonly minHealthScore: number;
+    readonly cooldownMs: number;
+    readonly requireSpf: boolean;
+    readonly requireDkim: boolean;
+    readonly requireDmarc: boolean;
+  };
+  readonly warmupPool: {
+    readonly selectionStrategy:
+      | "ROUND_ROBIN"
+      | "LEAST_USED"
+      | "WEIGHTED"
+      | "HEALTH_FIRST"
+      | "HEALTH_FIRST_LEAST_USED";
+    readonly maxDomainSharePercent: number;
+    readonly maxConsecutiveSameDomain: number;
+    readonly selectionCooldownMs: number;
   };
 }
+
+const POOL_STRATEGY_ENV: Record<string, AppConfig["warmupPool"]["selectionStrategy"]> = {
+  round_robin: "ROUND_ROBIN",
+  least_used: "LEAST_USED",
+  weighted: "WEIGHTED",
+  health_first: "HEALTH_FIRST",
+  health_first_least_used: "HEALTH_FIRST_LEAST_USED",
+};
 
 /**
  * Treats an empty string the same as "unset". `.env` files and this repo's
@@ -63,7 +117,12 @@ function toAppConfig(env: EnvShape): AppConfig {
     isDevelopment: env.NODE_ENV === "development",
     isTest: env.NODE_ENV === "test",
     service: { name: env.SERVICE_NAME, version: env.SERVICE_VERSION },
-    http: { port: env.PORT },
+    http: {
+      port: env.PORT,
+      host: env.HTTP_HOST,
+      bodyLimitBytes: env.HTTP_BODY_LIMIT_BYTES,
+      shutdownTimeoutMs: env.HTTP_SHUTDOWN_TIMEOUT_MS,
+    },
     log: { level: env.LOG_LEVEL },
     database: {
       url: env.DATABASE_URL,
@@ -71,6 +130,7 @@ function toAppConfig(env: EnvShape): AppConfig {
       poolMax: env.DB_POOL_MAX,
       connectionTimeoutMs: env.DB_CONNECTION_TIMEOUT_MS,
       idleTimeoutMs: env.DB_IDLE_TIMEOUT_MS,
+      statementTimeoutMs: env.DB_STATEMENT_TIMEOUT_MS,
     },
     redis: { url: env.REDIS_URL },
     security: {
@@ -99,6 +159,47 @@ function toAppConfig(env: EnvShape): AppConfig {
             },
           }
         : {}),
+      credentialRefreshTimeoutMs: env.PROVIDER_CREDENTIAL_REFRESH_TIMEOUT_MS,
+    },
+    ai: {
+      provider: env.AI_CLASSIFICATION_PROVIDER,
+      ...(env.AI_API_KEY ? { apiKey: env.AI_API_KEY } : {}),
+      baseUrl:
+        env.AI_BASE_URL ??
+        (env.AI_CLASSIFICATION_PROVIDER === "openrouter" ? "https://openrouter.ai/api/v1" : "https://api.openai.com/v1"),
+      model: env.AI_MODEL,
+      timeoutMs: env.AI_CLASSIFICATION_TIMEOUT_MS,
+      maxInputChars: env.AI_MAX_INPUT_CHARS,
+      maxOutputChars: env.AI_MAX_OUTPUT_CHARS,
+      classifierVersion: env.AI_CLASSIFIER_VERSION,
+      taxonomyVersion: env.CLASSIFICATION_TAXONOMY_VERSION,
+      supplementDeterministic: env.AI_CLASSIFICATION_SUPPLEMENT === "true",
+    },
+    conversations: {
+      policyVersion: env.CONVERSATION_POLICY_VERSION,
+      policyTaxonomyVersion: env.CONVERSATION_POLICY_TAXONOMY_VERSION,
+    },
+    workers: {
+      warmupPollIntervalMs: env.WARMUP_WORKER_POLL_INTERVAL_MS,
+      inboundPollIntervalMs: env.INBOUND_WORKER_POLL_INTERVAL_MS,
+      classificationPollIntervalMs: env.CLASSIFICATION_WORKER_POLL_INTERVAL_MS,
+      policyPollIntervalMs: env.POLICY_WORKER_POLL_INTERVAL_MS,
+    },
+    warmupNetwork: {
+      routingMode: env.WARMUP_NETWORK_ROUTING_MODE,
+      recentInteractionWindowMs: env.WARMUP_NETWORK_RECENT_INTERACTION_WINDOW_MS,
+      defaultDailyCapacity: env.WARMUP_NETWORK_DEFAULT_DAILY_CAPACITY,
+      minHealthScore: env.WARMUP_NETWORK_MIN_HEALTH_SCORE,
+      cooldownMs: env.WARMUP_NETWORK_COOLDOWN_MS,
+      requireSpf: env.WARMUP_NETWORK_REQUIRE_SPF === "true",
+      requireDkim: env.WARMUP_NETWORK_REQUIRE_DKIM === "true",
+      requireDmarc: env.WARMUP_NETWORK_REQUIRE_DMARC === "true",
+    },
+    warmupPool: {
+      selectionStrategy: POOL_STRATEGY_ENV[env.WARMUP_POOL_SELECTION_STRATEGY] ?? "HEALTH_FIRST_LEAST_USED",
+      maxDomainSharePercent: env.WARMUP_MAX_DOMAIN_SHARE_PERCENT,
+      maxConsecutiveSameDomain: env.WARMUP_MAX_CONSECUTIVE_SAME_DOMAIN,
+      selectionCooldownMs: env.WARMUP_POOL_SELECTION_COOLDOWN_MS,
     },
   };
 }

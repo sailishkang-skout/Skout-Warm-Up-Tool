@@ -27,6 +27,7 @@ function makeMailbox(overrides: Partial<Mailbox> = {}): Mailbox {
     provider: "GMAIL",
     status: "CONNECTED",
     enabled: true,
+    timezone: "UTC",
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -135,6 +136,8 @@ function makeFakeAssessmentRepository(): MailboxAssessmentRepository & { snapsho
 }
 
 function makeFakeReputationService(): ReputationService {
+  const emptyWindow = { eventCount: 0, deliveryRate: "UNKNOWN", bounceRate: "UNKNOWN", hardBounceRate: "UNKNOWN", softBounceRate: "UNKNOWN", throttleRate: "UNKNOWN", rejectionRate: "UNKNOWN", failureRate: "UNKNOWN", complaintRate: "UNKNOWN", unknownRate: "UNKNOWN" } as const;
+  const emptyTrends = { delivery: "UNKNOWN", bounce: "UNKNOWN", throttle: "UNKNOWN", failure: "UNKNOWN", complaint: "UNKNOWN" } as const;
   const assessment: ReputationAssessment = {
     id: asReputationAssessmentId("reputation-1"),
     tenantId: TENANT_ID,
@@ -142,10 +145,22 @@ function makeFakeReputationService(): ReputationService {
     status: "UNKNOWN",
     confidence: "LOW",
     factors: [],
-    trends: { delivery: "UNKNOWN", bounce: "UNKNOWN", throttle: "UNKNOWN", failure: "UNKNOWN", complaint: "UNKNOWN" },
-    last24h: { eventCount: 0, deliveryRate: "UNKNOWN", bounceRate: "UNKNOWN", hardBounceRate: "UNKNOWN", softBounceRate: "UNKNOWN", throttleRate: "UNKNOWN", rejectionRate: "UNKNOWN", failureRate: "UNKNOWN", complaintRate: "UNKNOWN", unknownRate: "UNKNOWN" },
-    last7d: { eventCount: 0, deliveryRate: "UNKNOWN", bounceRate: "UNKNOWN", hardBounceRate: "UNKNOWN", softBounceRate: "UNKNOWN", throttleRate: "UNKNOWN", rejectionRate: "UNKNOWN", failureRate: "UNKNOWN", complaintRate: "UNKNOWN", unknownRate: "UNKNOWN" },
-    lifetime: { eventCount: 0, deliveryRate: "UNKNOWN", bounceRate: "UNKNOWN", hardBounceRate: "UNKNOWN", softBounceRate: "UNKNOWN", throttleRate: "UNKNOWN", rejectionRate: "UNKNOWN", failureRate: "UNKNOWN", complaintRate: "UNKNOWN", unknownRate: "UNKNOWN" },
+    trends: emptyTrends,
+    last24h: emptyWindow,
+    last7d: emptyWindow,
+    lifetime: emptyWindow,
+    providerReputation: { provider: "GMAIL", status: "UNKNOWN", confidence: "LOW", factors: [], trends: emptyTrends, last24h: emptyWindow, last7d: emptyWindow, lifetime: emptyWindow },
+    domainReputation: {
+      domain: "example.com",
+      status: "UNKNOWN",
+      confidence: "LOW",
+      factors: [],
+      trends: emptyTrends,
+      last24h: emptyWindow,
+      last7d: emptyWindow,
+      lifetime: emptyWindow,
+      authentication: { mx: "UNKNOWN", spf: "UNKNOWN", dkim: "UNKNOWN", dmarc: "UNKNOWN" },
+    },
     assessedAt: new Date(),
     createdAt: new Date(),
   };

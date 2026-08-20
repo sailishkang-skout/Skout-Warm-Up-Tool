@@ -107,10 +107,44 @@ export class PostgresDeliveryEventRepository implements DeliveryEventRepository 
        GROUP BY event_type`,
       [tenantId, mailboxId, windowStart, windowEnd],
     );
-    const counts = zeroCounts();
-    for (const row of rows) {
-      counts[row.event_type] = Number.parseInt(row.count, 10);
-    }
-    return counts;
+    return sumRows(rows);
   }
+
+  // No new index for this tenant_id + provider + observed_at filter (Stage
+  // 11 spec section 14/step 11: "avoid speculative indexes... add indexes
+  // only for demonstrated patterns") — this system's realistic per-tenant
+  // volume (a handful of mailboxes, ~5-50 events/day each) makes a scan
+  // bounded by the existing tenant_id index cheap; a dedicated index can be
+  // added later if real query patterns demonstrate the need.
+  async countByEventTypeForProvider(tenantId: TenantId, provider: MailboxProviderType, windowStart: Date, windowEnd: Date): Promise<DeliveryEventCounts> {
+    const rows = await this.db.query<{ event_type: DeliveryEventType; count: string }>(
+      `SELECT event_type, COUNT(*)::text AS count
+       FROM delivery_events
+       WHERE tenant_id = $1 AND provider = $2 AND observed_at >= $3 AND observed_at < $4
+       GROUP BY event_type`,
+      [tenantId, provider, windowStart, windowEnd],
+    );
+    return sumRows(rows);
+  }
+
+  async countByEventTypeForDomain(tenantId: TenantId, domain: string, windowStart: Date, windowEnd: Date): Promise<DeliveryEventCounts> {
+    const rows = await this.db.query<{ event_type: DeliveryEventType; count: string }>(
+      `SELECT de.event_type, COUNT(*)::text AS count
+       FROM delivery_events de
+       JOIN mailboxes m ON m.id = de.mailbox_id AND m.tenant_id = de.tenant_id
+       WHERE de.tenant_id = $1 AND lower(split_part(m.email_address_canonical, '@', 2)) = $2
+         AND de.observed_at >= $3 AND de.observed_at < $4
+       GROUP BY de.event_type`,
+      [tenantId, domain.toLowerCase(), windowStart, windowEnd],
+    );
+    return sumRows(rows);
+  }
+}
+
+function sumRows(rows: ReadonlyArray<{ event_type: DeliveryEventType; count: string }>): DeliveryEventCounts {
+  const counts = zeroCounts();
+  for (const row of rows) {
+    counts[row.event_type] = Number.parseInt(row.count, 10);
+  }
+  return counts;
 }

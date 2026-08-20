@@ -26,6 +26,12 @@ function parseMailboxId(rawId: string): MailboxId {
 // section 12: "Do not expose `active` as a freely mutable profile field."
 // A client sending one is silently ignored (zod strips unknown keys by
 // default), never accepted.
+// windowStartMinute/windowEndMinute: minutes since local midnight
+// (0-1439), evaluated against the mailbox's own timezone (Stage 12) — both
+// present or both absent, enforced by `warmup-profile-service.ts`'s
+// `assertValidWindow`, not here (zod validates shape/range; the
+// both-or-neither business rule lives with the other cross-field profile
+// validation in the service, same as `assertValidBounds`).
 const createProfileSchema = z.object({
   targetDailyVolume: z.number().int().min(0),
   startingDailyVolume: z.number().int().min(0),
@@ -33,6 +39,8 @@ const createProfileSchema = z.object({
   rampStrategy: z.enum(["CONSERVATIVE", "STANDARD", "AGGRESSIVE"]),
   riskTolerance: z.enum(["LOW", "MEDIUM", "HIGH"]),
   pauseConditions: z.array(z.string()).optional(),
+  windowStartMinute: z.number().int().min(0).max(1439).optional(),
+  windowEndMinute: z.number().int().min(0).max(1439).optional(),
 });
 
 const updateProfileSchema = z
@@ -43,6 +51,8 @@ const updateProfileSchema = z
     rampStrategy: z.enum(["CONSERVATIVE", "STANDARD", "AGGRESSIVE"]).optional(),
     riskTolerance: z.enum(["LOW", "MEDIUM", "HIGH"]).optional(),
     pauseConditions: z.array(z.string()).optional(),
+    windowStartMinute: z.number().int().min(0).max(1439).optional(),
+    windowEndMinute: z.number().int().min(0).max(1439).optional(),
   })
   .refine((value) => Object.keys(value).length > 0, { message: "At least one field must be provided" });
 
@@ -57,6 +67,7 @@ function toSafeProfileResponse(profile: WarmupProfile) {
     riskTolerance: profile.riskTolerance,
     active: profile.active,
     pauseConditions: profile.pauseConditions,
+    ...(profile.windowStartMinute !== undefined ? { windowStartMinute: profile.windowStartMinute, windowEndMinute: profile.windowEndMinute } : {}),
     createdAt: profile.createdAt.toISOString(),
     updatedAt: profile.updatedAt.toISOString(),
   };
@@ -89,10 +100,12 @@ export function warmupProfileRoutes(warmupProfileService: WarmupProfileService):
       if (!parsed.success) {
         throw new ValidationError("Invalid warmup profile", { fieldErrors: z.flattenError(parsed.error).fieldErrors });
       }
-      const { pauseConditions, ...rest } = parsed.data;
+      const { pauseConditions, windowStartMinute, windowEndMinute, ...rest } = parsed.data;
       const profile = await warmupProfileService.createProfile(tenantId, mailboxId, {
         ...rest,
         ...(pauseConditions ? { pauseConditions } : {}),
+        ...(windowStartMinute !== undefined ? { windowStartMinute } : {}),
+        ...(windowEndMinute !== undefined ? { windowEndMinute } : {}),
       });
       reply.status(201);
       return toSafeProfileResponse(profile);
@@ -105,7 +118,7 @@ export function warmupProfileRoutes(warmupProfileService: WarmupProfileService):
       if (!parsed.success) {
         throw new ValidationError("Invalid warmup profile update", { fieldErrors: z.flattenError(parsed.error).fieldErrors });
       }
-      const { targetDailyVolume, startingDailyVolume, maximumDailyVolume, rampStrategy, riskTolerance, pauseConditions } = parsed.data;
+      const { targetDailyVolume, startingDailyVolume, maximumDailyVolume, rampStrategy, riskTolerance, pauseConditions, windowStartMinute, windowEndMinute } = parsed.data;
       const profile = await warmupProfileService.updateProfile(tenantId, mailboxId, {
         ...(targetDailyVolume !== undefined ? { targetDailyVolume } : {}),
         ...(startingDailyVolume !== undefined ? { startingDailyVolume } : {}),
@@ -113,6 +126,8 @@ export function warmupProfileRoutes(warmupProfileService: WarmupProfileService):
         ...(rampStrategy !== undefined ? { rampStrategy } : {}),
         ...(riskTolerance !== undefined ? { riskTolerance } : {}),
         ...(pauseConditions !== undefined ? { pauseConditions } : {}),
+        ...(windowStartMinute !== undefined ? { windowStartMinute } : {}),
+        ...(windowEndMinute !== undefined ? { windowEndMinute } : {}),
       });
       return toSafeProfileResponse(profile);
     });

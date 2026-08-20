@@ -19,6 +19,8 @@ const createMailboxBodySchema = z.object({
   emailAddress: z.string().trim().min(3).max(320),
   provider: z.enum(MAILBOX_PROVIDER_TYPES),
   displayName: z.string().trim().min(1).max(200).optional(),
+  /** IANA identifier, e.g. "America/New_York" — defaults to "UTC" server-side when omitted. Format validated here; zone-name validity validated by `MailboxService` (Intl-backed). */
+  timezone: z.string().trim().min(1).max(64).optional(),
 });
 
 /**
@@ -51,6 +53,7 @@ function toSafeMailboxResponse(mailbox: Mailbox) {
     status: mailbox.status,
     enabled: mailbox.enabled,
     displayName: mailbox.displayName,
+    timezone: mailbox.timezone,
     createdAt: mailbox.createdAt.toISOString(),
     updatedAt: mailbox.updatedAt.toISOString(),
   };
@@ -128,6 +131,7 @@ export function mailboxRoutes(
         emailAddress: parsed.data.emailAddress,
         provider: parsed.data.provider,
         ...(parsed.data.displayName ? { displayName: parsed.data.displayName } : {}),
+        ...(parsed.data.timezone ? { timezone: parsed.data.timezone } : {}),
       });
 
       reply.status(201);

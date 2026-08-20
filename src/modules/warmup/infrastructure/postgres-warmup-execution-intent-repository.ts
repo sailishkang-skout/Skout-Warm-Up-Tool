@@ -12,9 +12,11 @@ import {
 import type { MailboxProviderType } from "../../mailbox/domain/mailbox.js";
 import type {
   CreateExecutionIntentInput,
+  ReclaimedIntent,
   RecordExecutionResultInput,
   WarmupExecutionIntentRepository,
 } from "../application/warmup-execution-intent-repository.js";
+import { MAX_ATTEMPTS } from "../domain/retry-policy.js";
 import type { ExecutionIntentStatus, WarmupExecutionIntent } from "../domain/warmup-execution-intent.js";
 import type { ProviderSendResult } from "../domain/send-result.js";
 
@@ -137,6 +139,54 @@ export class PostgresWarmupExecutionIntentRepository implements WarmupExecutionI
     return rows[0] ? mapRow(rows[0]) : undefined;
   }
 
+  async renewLease(tenantId: TenantId, intentId: WarmupExecutionIntentId, leaseOwner: string, leaseDurationMs: number): Promise<boolean> {
+    const leaseExpiresAt = new Date(Date.now() + leaseDurationMs);
+    const rows = await this.db.query<{ id: string }>(
+      `UPDATE warmup_execution_intents
+       SET lease_expires_at = $4
+       WHERE tenant_id = $1 AND id = $2 AND lease_owner = $3 AND status IN ('CLAIMED', 'SENDING')
+       RETURNING id`,
+      [tenantId, intentId, leaseOwner, leaseExpiresAt],
+    );
+    return rows.length > 0;
+  }
+
+  async reclaimExpiredLeases(now: Date, limit: number): Promise<readonly ReclaimedIntent[]> {
+    const rows = await this.db.query<{
+      id: string;
+      tenant_id: string;
+      mailbox_id: string;
+      session_id: string;
+      attempt_count: number;
+      new_status: "PENDING" | "FAILED";
+    }>(
+      `UPDATE warmup_execution_intents
+       SET status = new_status,
+           lease_owner = NULL,
+           lease_expires_at = NULL
+       FROM (
+         SELECT id, CASE WHEN attempt_count >= $2 THEN 'FAILED' ELSE 'PENDING' END AS new_status
+         FROM warmup_execution_intents
+         WHERE status IN ('CLAIMED', 'SENDING') AND lease_expires_at < $1
+         ORDER BY lease_expires_at ASC
+         LIMIT $3
+         FOR UPDATE SKIP LOCKED
+       ) AS reclaimable
+       WHERE warmup_execution_intents.id = reclaimable.id
+       RETURNING warmup_execution_intents.id, warmup_execution_intents.tenant_id, warmup_execution_intents.mailbox_id,
+                 warmup_execution_intents.session_id, warmup_execution_intents.attempt_count, reclaimable.new_status`,
+      [now, MAX_ATTEMPTS, limit],
+    );
+    return rows.map((row) => ({
+      id: asWarmupExecutionIntentId(row.id),
+      tenantId: asTenantId(row.tenant_id),
+      mailboxId: asMailboxId(row.mailbox_id),
+      sessionId: asWarmupSessionId(row.session_id),
+      attemptCount: row.attempt_count,
+      newStatus: row.new_status,
+    }));
+  }
+
   async markSending(tenantId: TenantId, intentId: WarmupExecutionIntentId, leaseOwner: string): Promise<WarmupExecutionIntent> {
     const rows = await this.db.query<WarmupExecutionIntentRow>(
       `UPDATE warmup_execution_intents
@@ -144,6 +194,20 @@ export class PostgresWarmupExecutionIntentRepository implements WarmupExecutionI
        WHERE tenant_id = $1 AND id = $2 AND lease_owner = $3 AND status = 'CLAIMED'
        RETURNING ${SELECT_COLUMNS}`,
       [tenantId, intentId, leaseOwner],
+    );
+    if (!rows[0]) {
+      throw new ConflictError("Execution intent lease is no longer held — it may have expired or been reassigned");
+    }
+    return mapRow(rows[0]);
+  }
+
+  async deferExecution(tenantId: TenantId, intentId: WarmupExecutionIntentId, leaseOwner: string, scheduledFor: Date): Promise<WarmupExecutionIntent> {
+    const rows = await this.db.query<WarmupExecutionIntentRow>(
+      `UPDATE warmup_execution_intents
+       SET status = 'PENDING', scheduled_for = $4, lease_owner = NULL, lease_expires_at = NULL
+       WHERE tenant_id = $1 AND id = $2 AND lease_owner = $3 AND status IN ('CLAIMED', 'SENDING')
+       RETURNING ${SELECT_COLUMNS}`,
+      [tenantId, intentId, leaseOwner, scheduledFor],
     );
     if (!rows[0]) {
       throw new ConflictError("Execution intent lease is no longer held — it may have expired or been reassigned");

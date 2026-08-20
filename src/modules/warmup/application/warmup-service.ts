@@ -4,6 +4,7 @@ import type { MailboxService } from "../../mailbox/application/mailbox-service.j
 import type { MailboxProviderType } from "../../mailbox/domain/mailbox.js";
 import { ConflictError, NotFoundError, PolicyError } from "../../../shared/errors/index.js";
 import type { MailboxId, TenantId } from "../../../shared/types/index.js";
+import { nextWindowStart } from "../domain/send-window.js";
 import { computeWarmupDay } from "../domain/warmup-day.js";
 import { computeIdempotencyKey } from "../domain/warmup-execution-intent.js";
 import { InvalidWarmupTransitionError, transitionWarmupState, type WarmupCommand, type WarmupState } from "../domain/warmup-state.js";
@@ -40,6 +41,27 @@ export interface WarmupService {
   stopWarmup(tenantId: TenantId, mailboxId: MailboxId): Promise<WarmupSession>;
   getStatus(tenantId: TenantId, mailboxId: MailboxId): Promise<WarmupStatusResult>;
   getDecisions(tenantId: TenantId, mailboxId: MailboxId, limit?: number): Promise<WarmupDecision[]>;
+  /**
+   * Stage 12: the scheduler-facing counterpart to `startWarmup`/`resumeWarmup`
+   * — computes and commits the next daily decision/intent for a session
+   * that is already `ACTIVE` and whose warmup day has genuinely advanced,
+   * *without* faking a pause/resume cycle to get there (Stage 12 spec: "Do
+   * not simulate this through ACTIVE → PAUSED → RESUME → ACTIVE"). Reuses
+   * the exact same `evaluateAndCommit` every other entry point already
+   * calls — this is a new *entry point* to existing logic, not new policy.
+   * Throws `PolicyError` if the session is not currently `ACTIVE`, or if
+   * `computeWarmupDay` says it isn't actually due yet (the caller —
+   * `application/warmup-scheduler.ts` — is expected to only call this for
+   * sessions its own due-check already confirmed, but this is re-verified
+   * here too rather than trusted, same "never trust a caller's staleness
+   * judgment" reasoning as everywhere else in this module).
+   */
+  advanceDailyWarmup(tenantId: TenantId, mailboxId: MailboxId): Promise<WarmupOperationResult>;
+}
+
+export interface WarmupPoolIntentHook {
+  /** Observability only — never rebinds session/intent mailbox identity. */
+  noteIntentBoundToMailbox(tenantId: TenantId, mailboxId: MailboxId, now: Date): Promise<void>;
 }
 
 export interface CreateWarmupServiceDeps {
@@ -50,10 +72,11 @@ export interface CreateWarmupServiceDeps {
   readonly decisionRepository: WarmupDecisionRepository;
   readonly intentRepository: WarmupExecutionIntentRepository;
   readonly auditRecorder: AuditEventRecorder;
+  readonly poolIntentHook?: WarmupPoolIntentHook;
 }
 
 export function createWarmupService(deps: CreateWarmupServiceDeps): WarmupService {
-  const { mailboxService, mailboxAssessmentService, warmupProfileRepository, sessionRepository, decisionRepository, intentRepository, auditRecorder } = deps;
+  const { mailboxService, mailboxAssessmentService, warmupProfileRepository, sessionRepository, decisionRepository, intentRepository, auditRecorder, poolIntentHook } = deps;
 
   function applyCommand(state: WarmupState, command: WarmupCommand): WarmupState {
     try {
@@ -86,6 +109,7 @@ export function createWarmupService(deps: CreateWarmupServiceDeps): WarmupServic
     mailboxId: MailboxId,
     mailboxEnabled: boolean,
     provider: MailboxProviderType,
+    timezone: string,
     session: WarmupSession,
   ): Promise<WarmupOperationResult> {
     const profile = await warmupProfileRepository.findByMailboxId(tenantId, mailboxId);
@@ -173,6 +197,18 @@ export function createWarmupService(deps: CreateWarmupServiceDeps): WarmupServic
       const committed = await sessionRepository.commitExecutionVolume(tenantId, session.id, day, outcome.target.recommended);
       if (committed) {
         const idempotencyKey = computeIdempotencyKey({ tenantId, sessionId: session.id, warmupDay: day, executionSlot: committed.allocatedSlot });
+        // Stage 12: when the profile has a configured send window, the
+        // intent isn't due until the window next opens — computed once
+        // here (not left to the execution worker to discover via repeated
+        // claim/defer cycles). `execution-worker.ts` still re-verifies this
+        // at claim time as defense-in-depth against drift; this is purely
+        // an efficiency/correctness optimization at creation time, never
+        // itself a safety decision.
+        const now = new Date();
+        const scheduledFor =
+          profile.windowStartMinute !== undefined && profile.windowEndMinute !== undefined
+            ? nextWindowStart({ timezone, windowStartMinute: profile.windowStartMinute, windowEndMinute: profile.windowEndMinute }, now)
+            : undefined;
         intent = await intentRepository.createIfAbsent({
           tenantId,
           sessionId: session.id,
@@ -183,8 +219,16 @@ export function createWarmupService(deps: CreateWarmupServiceDeps): WarmupServic
           executionSlot: committed.allocatedSlot,
           idempotencyKey,
           volume: outcome.target.recommended,
+          ...(scheduledFor ? { scheduledFor } : {}),
           expiresAt: new Date(Date.now() + INTENT_EXPIRY_MS),
         });
+        // Identity pools select WHO *before* this commit (WarmupPoolService).
+        // This path always binds the intent to the session's mailbox_id.
+        // Historical intents are never rewritten; claimed/executing/sent
+        // intents never rotate. Optional hook only timestamps membership.
+        if (poolIntentHook) {
+          await poolIntentHook.noteIntentBoundToMailbox(tenantId, mailboxId, new Date());
+        }
         await auditRecorder.record({
           tenantId,
           eventType: "WARMUP_INTENT_CREATED",
@@ -241,7 +285,7 @@ export function createWarmupService(deps: CreateWarmupServiceDeps): WarmupServic
         metadata: { mailboxId, sessionId: activated.id },
       });
 
-      return evaluateAndCommit(tenantId, mailboxId, mailbox.enabled, mailbox.provider, activated);
+      return evaluateAndCommit(tenantId, mailboxId, mailbox.enabled, mailbox.provider, mailbox.timezone, activated);
     },
 
     async pauseWarmup(tenantId, mailboxId) {
@@ -259,7 +303,7 @@ export function createWarmupService(deps: CreateWarmupServiceDeps): WarmupServic
       await auditRecorder.record({ tenantId, eventType: "WARMUP_RESUMED", actorType: "api_key", metadata: { mailboxId, sessionId: session.id } });
 
       const mailbox = await mailboxService.getMailbox(tenantId, mailboxId);
-      return evaluateAndCommit(tenantId, mailboxId, mailbox.enabled, mailbox.provider, resumed);
+      return evaluateAndCommit(tenantId, mailboxId, mailbox.enabled, mailbox.provider, mailbox.timezone, resumed);
     },
 
     async stopWarmup(tenantId, mailboxId) {
@@ -272,6 +316,24 @@ export function createWarmupService(deps: CreateWarmupServiceDeps): WarmupServic
       await warmupProfileRepository.setActive(tenantId, mailboxId, false);
       await auditRecorder.record({ tenantId, eventType: "WARMUP_STOPPED", actorType: "api_key", metadata: { mailboxId, sessionId: session.id } });
       return stopped;
+    },
+
+    async advanceDailyWarmup(tenantId, mailboxId) {
+      const session = await requireOpenSession(tenantId, mailboxId);
+      if (session.state !== "ACTIVE") {
+        throw new PolicyError(`Cannot advance daily warmup — session is not ACTIVE (currently ${session.state})`);
+      }
+      const mailbox = await mailboxService.getMailbox(tenantId, mailboxId);
+      // Re-verified here, not trusted from the scheduler's own due-check
+      // (Stage 12 spec: never trust a caller's staleness judgment) — a
+      // session already advanced by a concurrent call (another scheduler
+      // tick, or a human hitting `resumeWarmup`) between the scheduler's
+      // scan and this call is simply not due anymore, not an error.
+      const day = computeWarmupDay(session.startedAt ?? new Date(), new Date());
+      if (day <= session.currentDay) {
+        return { session };
+      }
+      return evaluateAndCommit(tenantId, mailboxId, mailbox.enabled, mailbox.provider, mailbox.timezone, session);
     },
 
     async getStatus(tenantId, mailboxId) {

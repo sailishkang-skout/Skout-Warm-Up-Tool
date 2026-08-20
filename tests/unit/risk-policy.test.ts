@@ -32,7 +32,31 @@ const EMPTY_WINDOW = {
   unknownRate: "UNKNOWN" as const,
 };
 
-function reputation(factors: ReputationFactor[] = [], status: ReputationAssessment["status"] = "HEALTHY"): ReputationAssessment {
+const STABLE_TRENDS = { delivery: "STABLE", bounce: "STABLE", throttle: "STABLE", failure: "STABLE", complaint: "STABLE" } as const;
+
+function providerReputation(factors: ReputationFactor[] = [], status: ReputationAssessment["status"] = "UNKNOWN"): ReputationAssessment["providerReputation"] {
+  return { provider: "GMAIL", status, confidence: "HIGH", factors, trends: STABLE_TRENDS, last24h: EMPTY_WINDOW, last7d: EMPTY_WINDOW, lifetime: { ...EMPTY_WINDOW, eventCount: 100 } };
+}
+
+function domainReputation(factors: ReputationFactor[] = [], status: ReputationAssessment["status"] = "UNKNOWN"): ReputationAssessment["domainReputation"] {
+  return {
+    domain: "example.com",
+    status,
+    confidence: "HIGH",
+    factors,
+    trends: STABLE_TRENDS,
+    last24h: EMPTY_WINDOW,
+    last7d: EMPTY_WINDOW,
+    lifetime: { ...EMPTY_WINDOW, eventCount: 100 },
+    authentication: { mx: "PASS", spf: "PASS", dkim: "PASS", dmarc: "PASS" },
+  };
+}
+
+function reputation(
+  factors: ReputationFactor[] = [],
+  status: ReputationAssessment["status"] = "HEALTHY",
+  overrides: Partial<Pick<ReputationAssessment, "providerReputation" | "domainReputation">> = {},
+): ReputationAssessment {
   return {
     id: asReputationAssessmentId("11111111-1111-1111-1111-111111111111"),
     tenantId: asTenantId("22222222-2222-2222-2222-222222222222"),
@@ -40,12 +64,15 @@ function reputation(factors: ReputationFactor[] = [], status: ReputationAssessme
     status,
     confidence: "HIGH",
     factors,
-    trends: { delivery: "STABLE", bounce: "STABLE", throttle: "STABLE", failure: "STABLE", complaint: "STABLE" },
+    trends: STABLE_TRENDS,
     last24h: EMPTY_WINDOW,
     last7d: EMPTY_WINDOW,
     lifetime: { ...EMPTY_WINDOW, eventCount: 100 },
+    providerReputation: providerReputation(),
+    domainReputation: domainReputation(),
     assessedAt: NOW,
     createdAt: NOW,
+    ...overrides,
   };
 }
 
@@ -198,6 +225,109 @@ describe("evaluateRisk", () => {
       const result = evaluateRisk({ health: health(), domainAssessed: true, reputation: reputation([], "UNKNOWN") }, NOW);
       expect(result.riskLevel).toBe("LOW");
       expect(result.riskScore).toBe(0);
+    });
+  });
+
+  describe("provider/domain reputation integration (Stage 11)", () => {
+    it("a PROVIDER_HIGH_BOUNCE_RATE factor is re-weighted into the risk score", () => {
+      const result = evaluateRisk(
+        {
+          health: health(),
+          domainAssessed: true,
+          reputation: reputation([], "HEALTHY", {
+            providerReputation: providerReputation([{ code: "PROVIDER_HIGH_BOUNCE_RATE", description: "Provider-wide bounce rate is elevated.", severity: "HIGH" }], "POOR"),
+          }),
+        },
+        NOW,
+      );
+      expect(result.riskFactors.map((f) => f.code)).toContain("PROVIDER_HIGH_BOUNCE_RATE");
+      expect(result.riskScore).toBeGreaterThan(0);
+    });
+
+    it("a DOMAIN_COMPLAINT_SIGNAL factor is re-weighted into the risk score", () => {
+      const result = evaluateRisk(
+        {
+          health: health(),
+          domainAssessed: true,
+          reputation: reputation([], "HEALTHY", {
+            domainReputation: domainReputation([{ code: "DOMAIN_COMPLAINT_SIGNAL", description: "6 complaint(s) observed for this domain.", severity: "CRITICAL" }], "CRITICAL"),
+          }),
+        },
+        NOW,
+      );
+      expect(result.riskFactors.map((f) => f.code)).toContain("DOMAIN_COMPLAINT_SIGNAL");
+    });
+
+    it("a single provider or domain reputation factor never alone reaches CRITICAL risk, even at CRITICAL severity", () => {
+      const result = evaluateRisk(
+        {
+          health: health(),
+          domainAssessed: true,
+          reputation: reputation([], "HEALTHY", {
+            providerReputation: providerReputation([{ code: "PROVIDER_COMPLAINT_SIGNAL", description: "Provider-wide complaints.", severity: "CRITICAL" }], "CRITICAL"),
+          }),
+        },
+        NOW,
+      );
+      expect(result.riskLevel).not.toBe("CRITICAL");
+    });
+
+    it("a mailbox with a perfectly clean own history still sees elevated risk from a struggling provider/domain", () => {
+      const clean = evaluateRisk({ health: health(), domainAssessed: true, reputation: reputation([], "EXCELLENT") }, NOW);
+      const withProviderProblem = evaluateRisk(
+        {
+          health: health(),
+          domainAssessed: true,
+          reputation: reputation([], "EXCELLENT", {
+            providerReputation: providerReputation([{ code: "PROVIDER_HIGH_BOUNCE_RATE", description: "Provider-wide bounce rate is elevated.", severity: "HIGH" }], "POOR"),
+          }),
+        },
+        NOW,
+      );
+      expect(withProviderProblem.riskScore).toBeGreaterThan(clean.riskScore);
+    });
+
+    it("multiple corroborating mailbox + provider + domain factors can combine to reach CRITICAL", () => {
+      const result = evaluateRisk(
+        {
+          health: health(),
+          domainAssessed: true,
+          reputation: reputation(
+            [
+              { code: "COMPLAINT_SIGNAL", description: "Mailbox complaints.", severity: "CRITICAL" },
+              { code: "HIGH_BOUNCE_RATE", description: "Mailbox bounce rate.", severity: "CRITICAL" },
+            ],
+            "CRITICAL",
+            {
+              providerReputation: providerReputation([{ code: "PROVIDER_HIGH_THROTTLE_RATE", description: "Provider-wide throttling.", severity: "HIGH" }], "POOR"),
+              domainReputation: domainReputation([{ code: "DOMAIN_HIGH_FAILURE_RATE", description: "Domain-wide failures.", severity: "HIGH" }], "POOR"),
+            },
+          ),
+        },
+        NOW,
+      );
+      expect(result.riskLevel).toBe("CRITICAL");
+    });
+
+    it("provider reputation with real evidence keeps risk out of UNKNOWN even when health and mailbox reputation are both unmeasured", () => {
+      const unmeasured = health({ connection: "UNKNOWN", authentication: "UNKNOWN", sending: "UNKNOWN", receiving: "UNKNOWN", domain: "UNKNOWN" });
+      const result = evaluateRisk(
+        {
+          health: unmeasured,
+          domainAssessed: false,
+          reputation: reputation([], "UNKNOWN", {
+            providerReputation: providerReputation([{ code: "PROVIDER_HIGH_BOUNCE_RATE", description: "Provider-wide bounce rate.", severity: "MEDIUM" }], "DEGRADED"),
+          }),
+        },
+        NOW,
+      );
+      expect(result.riskLevel).not.toBe("UNKNOWN");
+    });
+
+    it("everything UNKNOWN (health, mailbox, provider, domain) still returns UNKNOWN risk, never a fabricated LOW", () => {
+      const unmeasured = health({ connection: "UNKNOWN", authentication: "UNKNOWN", sending: "UNKNOWN", receiving: "UNKNOWN", domain: "UNKNOWN" });
+      const result = evaluateRisk({ health: unmeasured, domainAssessed: false, reputation: reputation([], "UNKNOWN") }, NOW);
+      expect(result.riskLevel).toBe("UNKNOWN");
     });
   });
 });

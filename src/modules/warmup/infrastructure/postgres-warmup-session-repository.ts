@@ -165,4 +165,15 @@ export class PostgresWarmupSessionRepository implements WarmupSessionRepository 
     }
     return { session: mapRow(rows[0]), allocatedSlot: rows[0].allocated_slot };
   }
+
+  async findActiveSessionsDueForDecision(beforeUtcMidnight: Date, limit: number): Promise<WarmupSession[]> {
+    const rows = await this.db.query<WarmupSessionRow>(
+      `SELECT ${SELECT_COLUMNS} FROM warmup_sessions
+       WHERE state = 'ACTIVE' AND (last_decision_at IS NULL OR last_decision_at < $1)
+       ORDER BY last_decision_at ASC NULLS FIRST
+       LIMIT $2`,
+      [beforeUtcMidnight, limit],
+    );
+    return rows.map(mapRow);
+  }
 }

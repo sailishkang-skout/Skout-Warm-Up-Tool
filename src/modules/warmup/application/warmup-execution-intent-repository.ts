@@ -31,6 +31,22 @@ export interface RecordExecutionResultInput {
 }
 
 /**
+ * One intent whose lease was found expired during a reclaim sweep (Stage
+ * 12) — `newStatus` is `PENDING` (retry budget remains) or `FAILED`
+ * (attempt ceiling already reached, see `domain/retry-policy.ts`'s
+ * `MAX_ATTEMPTS`), so a persistently-crashing worker can never cycle an
+ * intent between `CLAIMED` and reclaimed-`PENDING` forever.
+ */
+export interface ReclaimedIntent {
+  readonly id: WarmupExecutionIntentId;
+  readonly tenantId: TenantId;
+  readonly mailboxId: MailboxId;
+  readonly sessionId: WarmupSessionId;
+  readonly attemptCount: number;
+  readonly newStatus: "PENDING" | "FAILED";
+}
+
+/**
  * Port implemented by
  * `infrastructure/postgres-warmup-execution-intent-repository.ts`.
  * `claimNext` is deliberately not tenant-scoped — a worker is a background
@@ -52,8 +68,40 @@ export interface WarmupExecutionIntentRepository {
    * nothing is currently claimable.
    */
   claimNext(leaseOwner: string, leaseDurationMs: number): Promise<WarmupExecutionIntent | undefined>;
+  /**
+   * Extends an already-held lease (Stage 12) — called on a heartbeat
+   * interval by `execution-worker.ts` while a claim is still being
+   * processed, so a legitimately-slow (but still alive) worker's lease
+   * never expires out from under it. Returns `false` (never throws) if the
+   * lease is no longer held under this `leaseOwner` — the caller only logs
+   * this, since the in-flight operation it's protecting can't safely be
+   * cancelled mid-flight (see `execution-worker.ts`'s lease-safety doc
+   * comment for the full analysis and the guarantee this provides).
+   */
+  renewLease(tenantId: TenantId, intentId: WarmupExecutionIntentId, leaseOwner: string, leaseDurationMs: number): Promise<boolean>;
+  /**
+   * Reclaims every `CLAIMED`/`SENDING` intent whose lease has genuinely
+   * expired (Stage 12) — the counterpart to a worker crash between
+   * `claimNext` and `recordResult`, which otherwise leaves an intent stuck
+   * forever (`claimNext` only ever selects `PENDING` rows). Each reclaimed
+   * row moves back to `PENDING` (retryable) or `FAILED` (attempt ceiling
+   * already reached — see `ReclaimedIntent`), never silently re-attempted
+   * without bound. Bounded by `limit`, same reasoning as every other
+   * background-scan method in this codebase.
+   */
+  reclaimExpiredLeases(now: Date, limit: number): Promise<readonly ReclaimedIntent[]>;
   /** CLAIMED → SENDING. Throws `ConflictError` if `leaseOwner` no longer matches (lease expired/reassigned). */
   markSending(tenantId: TenantId, intentId: WarmupExecutionIntentId, leaseOwner: string): Promise<WarmupExecutionIntent>;
+  /**
+   * Releases a held claim back to `PENDING` with a new `scheduledFor`,
+   * touching neither `lastResult` nor `attemptCount` (Stage 12) — used when
+   * a claimed intent is found outside its mailbox's configured send window
+   * at execution time. Deliberately distinct from `recordResult`: this is a
+   * scheduling deferral, not a provider outcome, so synthesizing a fake
+   * `ProviderSendResult` for it would misrepresent the intent's history.
+   * Throws `ConflictError` if `leaseOwner` no longer matches.
+   */
+  deferExecution(tenantId: TenantId, intentId: WarmupExecutionIntentId, leaseOwner: string, scheduledFor: Date): Promise<WarmupExecutionIntent>;
   /** Records the outcome of one attempt — terminal (`SENT`/`FAILED`/`CANCELLED`/`EXPIRED`) or re-queued (`PENDING` with a new `scheduledFor`). Throws `ConflictError` if `leaseOwner` no longer matches. */
   recordResult(
     tenantId: TenantId,

@@ -33,6 +33,17 @@ const ALL_MIGRATION_FILENAMES = [
   "017_add_requires_reconciliation_intent_status.sql",
   "018_create_delivery_events.sql",
   "019_create_reputation_assessments.sql",
+  "020_add_provider_domain_reputation.sql",
+  "021_add_scheduling_support.sql",
+  "022_create_conversations.sql",
+  "023_create_conversation_classifications.sql",
+  "024_classification_quality_and_domain_facts.sql",
+  "025_create_conversation_policy.sql",
+  "026_create_integration_events_outbox.sql",
+  "027_harden_integration_event_contract.sql",
+  "028_integration_events_outbox_immutable.sql",
+  "029_create_warmup_network.sql",
+  "030_create_warmup_pools.sql",
 ];
 
 let handle: TestDatabaseHandle;
@@ -79,6 +90,28 @@ describe("runMigrations", () => {
     await expect(handle.database.query("SELECT * FROM warmup_execution_intents LIMIT 0")).resolves.toEqual([]);
     await expect(handle.database.query("SELECT * FROM delivery_events LIMIT 0")).resolves.toEqual([]);
     await expect(handle.database.query("SELECT * FROM reputation_assessments LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT provider_reputation, domain_reputation FROM reputation_assessments LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT timezone FROM mailboxes LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT window_start_minute, window_end_minute FROM warmup_profiles LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM mailbox_inbound_sync_state LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM conversations LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM conversation_messages LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM conversation_message_classifications LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM conversation_classification_facts LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM conversation_domain_facts LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM conversation_policy_evaluations LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM conversation_policy_signals LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM integration_events_outbox LIMIT 0")).resolves.toEqual([]);
+    await expect(
+      handle.database.query("SELECT source, mailbox_id, execution_intent_id FROM integration_events_outbox LIMIT 0"),
+    ).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM warmup_networks LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM warmup_network_pools LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM warmup_network_domains LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM warmup_network_mailboxes LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM warmup_network_routing_decisions LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM warmup_pools LIMIT 0")).resolves.toEqual([]);
+    await expect(handle.database.query("SELECT * FROM warmup_pool_memberships LIMIT 0")).resolves.toEqual([]);
   });
 
   it("is idempotent — running it again applies nothing further", async () => {
@@ -103,7 +136,7 @@ describe("getMigrationStatus", () => {
   it("reports every migration as pending against an empty schema", async () => {
     const status = await getMigrationStatus(handle.pool);
     expect(status.every((entry) => !entry.applied)).toBe(true);
-    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+    expect(status.map((entry) => entry.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
   });
 
   it("reports applied migrations with an appliedAt timestamp after running them", async () => {

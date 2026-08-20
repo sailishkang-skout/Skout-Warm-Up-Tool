@@ -10,7 +10,11 @@ import { oauthRoutes } from "./modules/oauth/api/oauth-routes.js";
 import { reputationRoutes } from "./modules/reputation/api/reputation-routes.js";
 import { warmupProfileRoutes } from "./modules/warmup/api/warmup-profile-routes.js";
 import { warmupReconciliationRoutes } from "./modules/warmup/api/warmup-reconciliation-routes.js";
+import { conversationRoutes } from "./modules/conversations/api/conversation-routes.js";
+import { integrationEventRoutes } from "./modules/conversations/api/integration-event-routes.js";
 import { warmupRoutes } from "./modules/warmup/api/warmup-routes.js";
+import { warmupNetworkRoutes } from "./modules/warmup-network/api/warmup-network-routes.js";
+import { warmupPoolRoutes } from "./modules/warmup-pool/api/warmup-pool-routes.js";
 import { buildServices } from "./composition/build-services.js";
 import { authenticationPlugin } from "./plugins/authentication.js";
 import { errorHandlerPlugin } from "./plugins/error-handler.js";
@@ -30,6 +34,8 @@ export async function buildApp(config: AppConfig, logger: Logger, database: Data
     loggerInstance: logger,
     requestIdHeader: "x-request-id",
     genReqId: () => randomUUID(),
+    bodyLimit: config.http.bodyLimitBytes,
+    requestTimeout: config.http.shutdownTimeoutMs,
   });
 
   await app.register(requestContextPlugin);
@@ -63,6 +69,18 @@ export async function buildApp(config: AppConfig, logger: Logger, database: Data
   // delivery-events/README.md for the documented limitation and future
   // path). Never registered without fastify.authenticate.
   await app.register(deliveryEventRoutes(services.deliveryEventService), { prefix: "/api/v1/internal" });
+  await app.register(conversationRoutes(services.conversationService, services.classificationQuery, services.policyQuery), {
+    prefix: "/api/v1/conversations",
+  });
+  await app.register(integrationEventRoutes(services.integrationEventRepository), {
+    prefix: "/api/v1/integration-events",
+  });
+  await app.register(warmupNetworkRoutes(services.warmupNetworkService), {
+    prefix: "/api/v1/warmup-network",
+  });
+  await app.register(warmupPoolRoutes(services.warmupPoolService), {
+    prefix: "/api/v1/warmup",
+  });
 
   // "process is alive" — deliberately has no dependency on the database or
   // any other downstream system. A liveness probe that can fail because a

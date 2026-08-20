@@ -19,7 +19,37 @@ import { createRedisOAuthConnectionLock } from "../modules/oauth/infrastructure/
 import { createRedisOAuthStateStore } from "../modules/oauth/infrastructure/redis-oauth-state-store.js";
 import { PostgresConnectionAttemptRepository } from "../modules/oauth/infrastructure/postgres-connection-attempt-repository.js";
 import { createProviderRegistry, type ProviderRegistry } from "../modules/providers/application/provider-registry.js";
+import { createConversationFactsPoller, type ConversationFactsPoller } from "../modules/conversations/application/conversation-facts-poller.js";
+import { createConversationService, type ConversationService } from "../modules/conversations/application/conversation-service.js";
+import { createInboundSyncService, type InboundSyncService } from "../modules/conversations/application/inbound-sync-service.js";
+import { createOutboundMaterializer, type OutboundMaterializer } from "../modules/conversations/application/outbound-materializer.js";
+import {
+  createClassificationWorker,
+  type ClassificationQueryService,
+  type ClassificationWorker,
+} from "../modules/conversations/application/classification-worker.js";
+import {
+  createConversationPolicyWorker,
+  type ConversationPolicyQueryService,
+  type ConversationPolicyWorker,
+} from "../modules/conversations/application/policy-evaluation-worker.js";
+import {
+  createHybridConversationClassifier,
+  createValidatingConversationClassifier,
+} from "../modules/conversations/application/conversation-classifier.js";
+import { PostgresClassificationRepository } from "../modules/conversations/infrastructure/postgres-classification-repository.js";
+import type { IntegrationEventRepository } from "../modules/conversations/application/integration-event-repository.js";
+import { PostgresConversationPolicyRepository } from "../modules/conversations/infrastructure/postgres-conversation-policy-repository.js";
+import { PostgresIntegrationEventRepository } from "../modules/conversations/infrastructure/postgres-integration-event-repository.js";
+import { HttpAiClassifierProvider } from "../modules/conversations/infrastructure/http-ai-classifier-provider.js";
+import { PostgresConversationMessageRepository } from "../modules/conversations/infrastructure/postgres-conversation-message-repository.js";
+import { PostgresConversationRepository } from "../modules/conversations/infrastructure/postgres-conversation-repository.js";
+import { PostgresInboundSyncStateRepository } from "../modules/conversations/infrastructure/postgres-inbound-sync-state-repository.js";
+import { createPollableMailboxReader } from "../modules/conversations/infrastructure/pollable-mailbox-reader.js";
+import { createUnmaterializedSentIntentReader } from "../modules/conversations/infrastructure/unmaterialized-sent-intent-reader.js";
 import { GmailAdapter } from "../modules/providers/infrastructure/gmail/gmail-adapter.js";
+import { GmailInboundProvider } from "../modules/providers/infrastructure/gmail/gmail-inbound-provider.js";
+import { Microsoft365InboundProvider } from "../modules/providers/infrastructure/microsoft365/microsoft365-inbound-provider.js";
 import { Microsoft365Adapter } from "../modules/providers/infrastructure/microsoft365/microsoft365-adapter.js";
 import { PostgresProviderAccountRepository } from "../modules/providers/infrastructure/postgres-provider-account-repository.js";
 import { createPostgresProviderCredentialStore } from "../modules/providers/infrastructure/postgres-provider-credential-store.js";
@@ -30,8 +60,14 @@ import { PostgresTenantRepository } from "../modules/tenancy/infrastructure/post
 import { createExecutionWorker, type ExecutionWorker } from "../modules/warmup/application/execution-worker.js";
 import { createWarmupProfileService, type WarmupProfileService } from "../modules/warmup/application/warmup-profile-service.js";
 import { createWarmupReconciliationService, type WarmupReconciliationService } from "../modules/warmup/application/warmup-reconciliation-service.js";
+import { createWarmupScheduler, type WarmupScheduler } from "../modules/warmup/application/warmup-scheduler.js";
 import { createWarmupService, type WarmupService } from "../modules/warmup/application/warmup-service.js";
 import { createAdapterWarmupSendProvider } from "../modules/warmup/infrastructure/adapter-warmup-send-provider.js";
+import { createWarmupNetworkRouter } from "../modules/warmup-network/application/warmup-network-router.js";
+import { createWarmupNetworkService, type WarmupNetworkService } from "../modules/warmup-network/application/warmup-network-service.js";
+import { PostgresWarmupNetworkRepository } from "../modules/warmup-network/infrastructure/postgres-warmup-network-repository.js";
+import { createWarmupPoolService, type WarmupPoolService } from "../modules/warmup-pool/application/warmup-pool-service.js";
+import { PostgresWarmupPoolRepository } from "../modules/warmup-pool/infrastructure/postgres-warmup-pool-repository.js";
 import { PostgresWarmupDecisionRepository } from "../modules/warmup/infrastructure/postgres-warmup-decision-repository.js";
 import { PostgresWarmupExecutionIntentRepository } from "../modules/warmup/infrastructure/postgres-warmup-execution-intent-repository.js";
 import { PostgresWarmupProfileRepository } from "../modules/warmup/infrastructure/postgres-warmup-profile-repository.js";
@@ -56,6 +92,18 @@ export interface AppServices {
   readonly warmupProfileService: WarmupProfileService;
   readonly warmupReconciliationService: WarmupReconciliationService;
   readonly executionWorker: ExecutionWorker;
+  readonly warmupScheduler: WarmupScheduler;
+  readonly conversationService: ConversationService;
+  readonly inboundSyncService: InboundSyncService;
+  readonly outboundMaterializer: OutboundMaterializer;
+  readonly conversationFactsPoller: ConversationFactsPoller;
+  readonly classificationWorker: ClassificationWorker;
+  readonly classificationQuery: ClassificationQueryService;
+  readonly policyWorker: ConversationPolicyWorker;
+  readonly policyQuery: ConversationPolicyQueryService;
+  readonly integrationEventRepository: IntegrationEventRepository;
+  readonly warmupNetworkService: WarmupNetworkService;
+  readonly warmupPoolService: WarmupPoolService;
 }
 
 /**
@@ -95,9 +143,15 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
   // this deployment can run with only a subset of providers enabled, per
   // Stage 6 spec section 24, with no code branch anywhere else needing to
   // know which.
-  providerRegistry.register(new GmailAdapter(config.providers.google ? { config: config.providers.google } : {}));
+  // Stage 12.1: refreshTimeoutMs always passed explicitly (unlike
+  // config/fetchImpl, which are conditional on provider configuration) —
+  // bounding the refresh call is unconditional, independent of whether
+  // this deployment has real OAuth credentials configured.
   providerRegistry.register(
-    new Microsoft365Adapter(config.providers.microsoft ? { config: config.providers.microsoft } : {}),
+    new GmailAdapter({ ...(config.providers.google ? { config: config.providers.google } : {}), refreshTimeoutMs: config.providers.credentialRefreshTimeoutMs }),
+  );
+  providerRegistry.register(
+    new Microsoft365Adapter({ ...(config.providers.microsoft ? { config: config.providers.microsoft } : {}), refreshTimeoutMs: config.providers.credentialRefreshTimeoutMs }),
   );
   providerRegistry.register(new SmtpImapAdapter());
 
@@ -154,6 +208,12 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
     deliveryEventService,
     reputationRepository: new PostgresReputationRepository(database),
     auditRecorder,
+    // Stage 11: resolves each mailbox's provider/sending domain and reuses
+    // domain-intelligence's already-cached DNS facts — no second DNS
+    // resolver, no new module dependency cycle (mailbox/domain-intelligence
+    // depend on neither reputation nor health).
+    mailboxService,
+    domainIntelligenceService,
   });
 
   const mailboxAssessmentService = createMailboxAssessmentService({
@@ -169,6 +229,7 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
   const warmupSessionRepository = new PostgresWarmupSessionRepository(database);
   const warmupDecisionRepository = new PostgresWarmupDecisionRepository(database);
   const warmupExecutionIntentRepository = new PostgresWarmupExecutionIntentRepository(database);
+  const warmupPoolRepository = new PostgresWarmupPoolRepository(database);
 
   const warmupService = createWarmupService({
     mailboxService,
@@ -178,12 +239,31 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
     decisionRepository: warmupDecisionRepository,
     intentRepository: warmupExecutionIntentRepository,
     auditRecorder,
+    poolIntentHook: warmupPoolRepository,
   });
 
   const warmupProfileService = createWarmupProfileService({ mailboxService, warmupProfileRepository });
   const warmupReconciliationService = createWarmupReconciliationService({
     intentRepository: warmupExecutionIntentRepository,
     auditRecorder,
+  });
+
+  const warmupNetworkRepository = new PostgresWarmupNetworkRepository(database);
+  const warmupNetworkRouter = createWarmupNetworkRouter({
+    database,
+    mailboxService,
+    repository: warmupNetworkRepository,
+    auditRecorder,
+    config: config.warmupNetwork,
+  });
+  const warmupNetworkService = createWarmupNetworkService(warmupNetworkRepository);
+  const warmupPoolService = createWarmupPoolService({
+    database,
+    repository: warmupPoolRepository,
+    mailboxService,
+    warmupService,
+    auditRecorder,
+    config: config.warmupPool,
   });
 
   // The real Stage 9 send boundary: resolves the right ProviderAdapter
@@ -193,6 +273,8 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
   // src/modules/warmup/infrastructure/adapter-warmup-send-provider.ts).
   // SMTP/IMAP has no `sendMessage` implementation yet, so it safely
   // reports PROVIDER_SEND_UNAVAILABLE rather than faking a send.
+  // Stage 20: recipient routing is opt-in (`WARMUP_NETWORK_ROUTING_MODE`,
+  // default off = self-send, no network queries).
   const executionWorker = createExecutionWorker({
     intentRepository: warmupExecutionIntentRepository,
     sessionRepository: warmupSessionRepository,
@@ -205,9 +287,118 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
       credentialStore,
       providerRegistry,
       auditRecorder,
+      warmupNetworkRouter,
+      warmupNetworkRoutingMode: config.warmupNetwork.routingMode,
     }),
     auditRecorder,
+    logger,
   });
+
+  // Stage 12: the scheduler answers "when," never "is it safe" — every
+  // responsibility here delegates to already-existing logic
+  // (reclaimExpiredLeases, WarmupService.advanceDailyWarmup, the
+  // unmodified executionWorker.processNext). See warmup/README.md's Stage
+  // 12 section and src/workers/execution-worker-process.ts, the only
+  // production caller of `runTick`.
+  const warmupScheduler = createWarmupScheduler({
+    warmupService,
+    sessionRepository: warmupSessionRepository,
+    intentRepository: warmupExecutionIntentRepository,
+    executionWorker,
+    auditRecorder,
+    logger,
+  });
+
+  const conversationRepository = new PostgresConversationRepository(database);
+  const conversationMessageRepository = new PostgresConversationMessageRepository(database);
+  const inboundSyncStateRepository = new PostgresInboundSyncStateRepository(database);
+  const classificationRepository = new PostgresClassificationRepository(database);
+  const conversationService = createConversationService({
+    database,
+    mailboxService,
+    conversationRepository,
+    messageRepository: conversationMessageRepository,
+    auditRecorder,
+    classificationRepository,
+    classifierVersion: config.ai.classifierVersion,
+    taxonomyVersion: config.ai.taxonomyVersion,
+  });
+  const gmailInboundProvider = new GmailInboundProvider();
+  const microsoft365InboundProvider = new Microsoft365InboundProvider();
+  const inboundProviders = { GMAIL: gmailInboundProvider, MICROSOFT365: microsoft365InboundProvider } as const;
+  const pollableMailboxReader = createPollableMailboxReader(database);
+  const unmaterializedSentIntentReader = createUnmaterializedSentIntentReader(database);
+  const providerAccountRepository = new PostgresProviderAccountRepository(database);
+
+  const inboundSyncService = createInboundSyncService({
+    database,
+    mailboxService,
+    providerRegistry,
+    providerAccountRepository,
+    credentialStore,
+    auditRecorder,
+    conversationService,
+    syncStateRepository: inboundSyncStateRepository,
+    listPollableMailboxes: () => pollableMailboxReader.list(),
+    inboundProviders,
+    logger,
+  });
+
+  const outboundMaterializer = createOutboundMaterializer({
+    mailboxService,
+    providerRegistry,
+    providerAccountRepository,
+    credentialStore,
+    auditRecorder,
+    conversationService,
+    messageRepository: conversationMessageRepository,
+    inboundProviders,
+    graphInboundProvider: microsoft365InboundProvider,
+    listUnmaterialized: (limit) => unmaterializedSentIntentReader.list(limit),
+    logger,
+  });
+
+  const conversationFactsPoller = createConversationFactsPoller(inboundSyncService, outboundMaterializer);
+
+  const aiProvider =
+    config.ai.provider !== "none" && config.ai.apiKey
+      ? new HttpAiClassifierProvider({
+          provider: config.ai.provider,
+          apiKey: config.ai.apiKey,
+          baseUrl: config.ai.baseUrl,
+          model: config.ai.model,
+          timeoutMs: config.ai.timeoutMs,
+          maxOutputChars: config.ai.maxOutputChars,
+        })
+      : undefined;
+  const aiClassifier = aiProvider
+    ? createValidatingConversationClassifier({ aiProvider, maxInputChars: config.ai.maxInputChars })
+    : undefined;
+  const classifier = createHybridConversationClassifier({
+    ...(aiClassifier ? { aiClassifier } : {}),
+    supplementDeterministic: config.ai.supplementDeterministic,
+  });
+  const classificationRuntime = createClassificationWorker({
+    conversationService,
+    messageRepository: conversationMessageRepository,
+    classificationRepository,
+    classifier,
+    classifierVersion: config.ai.classifierVersion,
+    taxonomyVersion: config.ai.taxonomyVersion,
+    modelName: config.ai.model,
+    maxInputChars: config.ai.maxInputChars,
+    auditRecorder,
+    logger,
+  });
+  const policyRuntime = createConversationPolicyWorker({
+    conversationService,
+    policyRepository: new PostgresConversationPolicyRepository(database),
+    policyVersion: config.conversations.policyVersion,
+    taxonomyVersion: config.conversations.policyTaxonomyVersion,
+    auditRecorder,
+    logger,
+  });
+  const integrationEventRepository = new PostgresIntegrationEventRepository(database);
 
   return {
     authenticationService,
@@ -223,5 +414,17 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
     warmupProfileService,
     warmupReconciliationService,
     executionWorker,
+    warmupScheduler,
+    conversationService,
+    inboundSyncService,
+    outboundMaterializer,
+    conversationFactsPoller,
+    classificationWorker: classificationRuntime,
+    classificationQuery: classificationRuntime,
+    policyWorker: policyRuntime,
+    policyQuery: policyRuntime,
+    integrationEventRepository,
+    warmupNetworkService,
+    warmupPoolService,
   };
 }

@@ -51,6 +51,19 @@ export interface ReputationPolicyInput {
   readonly lifetime: DeliveryEventCounts;
 }
 
+/**
+ * Stage 11: lets `reputation-service.ts` reuse this exact function for
+ * provider- and domain-scoped aggregation (`codePrefix: "PROVIDER_"` /
+ * `"DOMAIN_"`) instead of duplicating the threshold/trend/status logic — the
+ * only thing that differs between mailbox/provider/domain scope is which
+ * `DeliveryEventCounts` are fed in, never the evaluation itself. Omitting it
+ * (every pre-Stage-11 caller) produces byte-identical factor codes to
+ * before.
+ */
+export interface EvaluateReputationOptions {
+  readonly codePrefix?: string;
+}
+
 export interface ReputationPolicyResult {
   readonly status: ReputationStatus;
   readonly confidence: "LOW" | "MEDIUM" | "HIGH";
@@ -183,7 +196,8 @@ function confidenceFromSampleSize(eventCount: number): "LOW" | "MEDIUM" | "HIGH"
  * exposed as one of the three reported windows (Stage 10 spec section 7's
  * minimum: last 24h, last 7d, lifetime).
  */
-export function evaluateReputation(input: ReputationPolicyInput): ReputationPolicyResult {
+export function evaluateReputation(input: ReputationPolicyInput, options: EvaluateReputationOptions = {}): ReputationPolicyResult {
+  const prefix = options.codePrefix ?? "";
   const last24h = computeWindowEvidence(input.last24h);
   const prior24h = computeWindowEvidence(input.prior24h);
   const last7d = computeWindowEvidence(input.last7d);
@@ -205,29 +219,29 @@ export function evaluateReputation(input: ReputationPolicyInput): ReputationPoli
   // most recent, most decision-relevant evidence, not lifetime totals that
   // could mask a very recent problem behind a long healthy history.
   const factors: ReputationFactor[] = [];
-  pushRateFactor(factors, last24h.bounceRate, BOUNCE_RATE_THRESHOLDS, "HIGH_BOUNCE_RATE", (s) => `Bounce rate is elevated (${s.toLowerCase()}) over the last 24 hours.`);
-  pushRateFactor(factors, last24h.throttleRate, THROTTLE_RATE_THRESHOLDS, "HIGH_THROTTLE_RATE", (s) => `Provider throttling rate is elevated (${s.toLowerCase()}) over the last 24 hours.`);
-  pushRateFactor(factors, last24h.rejectionRate, REJECTION_RATE_THRESHOLDS, "HIGH_PROVIDER_REJECTION_RATE", (s) => `Provider rejection rate is elevated (${s.toLowerCase()}) over the last 24 hours.`);
-  pushRateFactor(factors, last24h.failureRate, FAILURE_RATE_THRESHOLDS, "HIGH_FAILURE_RATE", (s) => `Failure rate is elevated (${s.toLowerCase()}) over the last 24 hours.`);
+  pushRateFactor(factors, last24h.bounceRate, BOUNCE_RATE_THRESHOLDS, `${prefix}HIGH_BOUNCE_RATE`, (s) => `Bounce rate is elevated (${s.toLowerCase()}) over the last 24 hours.`);
+  pushRateFactor(factors, last24h.throttleRate, THROTTLE_RATE_THRESHOLDS, `${prefix}HIGH_THROTTLE_RATE`, (s) => `Provider throttling rate is elevated (${s.toLowerCase()}) over the last 24 hours.`);
+  pushRateFactor(factors, last24h.rejectionRate, REJECTION_RATE_THRESHOLDS, `${prefix}HIGH_PROVIDER_REJECTION_RATE`, (s) => `Provider rejection rate is elevated (${s.toLowerCase()}) over the last 24 hours.`);
+  pushRateFactor(factors, last24h.failureRate, FAILURE_RATE_THRESHOLDS, `${prefix}HIGH_FAILURE_RATE`, (s) => `Failure rate is elevated (${s.toLowerCase()}) over the last 24 hours.`);
 
   const complaintCount = input.last24h.COMPLAINT;
   const complaintSeverity = severityForCount(complaintCount, COMPLAINT_COUNT_THRESHOLDS);
   if (complaintSeverity) {
     factors.push({
-      code: "COMPLAINT_SIGNAL",
+      code: `${prefix}COMPLAINT_SIGNAL`,
       description: `${complaintCount} complaint(s) observed in the last 24 hours.`,
       severity: complaintSeverity,
     });
   }
 
   if (trends.delivery === "DEGRADING") {
-    factors.push({ code: "DEGRADING_DELIVERY_TREND", description: "Delivery success rate is trending down versus the prior 24-hour window.", severity: "MEDIUM" });
+    factors.push({ code: `${prefix}DEGRADING_DELIVERY_TREND`, description: "Delivery success rate is trending down versus the prior 24-hour window.", severity: "MEDIUM" });
   }
   if (trends.bounce === "DEGRADING") {
-    factors.push({ code: "DEGRADING_BOUNCE_TREND", description: "Bounce rate is trending up versus the prior 24-hour window.", severity: "MEDIUM" });
+    factors.push({ code: `${prefix}DEGRADING_BOUNCE_TREND`, description: "Bounce rate is trending up versus the prior 24-hour window.", severity: "MEDIUM" });
   }
   if (trends.throttle === "DEGRADING") {
-    factors.push({ code: "DEGRADING_PROVIDER_TREND", description: "Provider throttling rate is trending up versus the prior 24-hour window.", severity: "MEDIUM" });
+    factors.push({ code: `${prefix}DEGRADING_PROVIDER_TREND`, description: "Provider throttling rate is trending up versus the prior 24-hour window.", severity: "MEDIUM" });
   }
 
   const status = statusFromFactors(factors, lifetime, last7d);

@@ -8,6 +8,7 @@ import { createPostgresAuditEventRecorder } from "../../src/modules/audit/infras
 import type { AssessmentInvalidationStore } from "../../src/modules/health/application/assessment-invalidation-store.js";
 import { createDeliveryEventService, type DeliveryEventService } from "../../src/modules/delivery-events/application/delivery-event-service.js";
 import { PostgresDeliveryEventRepository } from "../../src/modules/delivery-events/infrastructure/postgres-delivery-event-repository.js";
+import type { DomainIntelligenceService } from "../../src/modules/domain-intelligence/application/domain-intelligence-service.js";
 import { createMailboxService } from "../../src/modules/mailbox/application/mailbox-service.js";
 import { PostgresMailboxRepository } from "../../src/modules/mailbox/infrastructure/postgres-mailbox-repository.js";
 import { createProviderRegistry } from "../../src/modules/providers/application/provider-registry.js";
@@ -63,16 +64,33 @@ function buildMailboxService() {
   });
 }
 
-async function createTenantAndMailbox(emailAddress = "reputation@example.com") {
+async function createTenantAndMailbox(emailAddress = "reputation@example.com", provider: "GMAIL" | "MICROSOFT365" = "GMAIL") {
   const tenant = await new PostgresTenantRepository(handle.database).create({ name: "Reputation Co" });
-  const mailbox = await new PostgresMailboxRepository(handle.database).create({ tenantId: tenant.id, emailAddress, provider: "GMAIL" });
+  const mailbox = await new PostgresMailboxRepository(handle.database).create({ tenantId: tenant.id, emailAddress, provider });
   return { tenant, mailbox };
 }
 
+/** No real DNS lookups in a DB test — same fixed-PASS fake `mailbox-assessment-service.test.ts` uses. */
+function fakeDomainIntelligenceService(): DomainIntelligenceService {
+  return {
+    async getAssessment(domain) {
+      return {
+        domain,
+        mx: { status: "PASS", records: [`mx1.${domain}`] },
+        spf: { status: "PASS", record: "v=spf1 -all" },
+        dkim: { status: "MISSING" },
+        dmarc: { status: "PASS", policy: "reject", record: "v=DMARC1; p=reject" },
+        checkedAt: new Date(),
+      };
+    },
+  };
+}
+
 function buildServices() {
+  const mailboxService = buildMailboxService();
   const deliveryEventService: DeliveryEventService = createDeliveryEventService({
     deliveryEventRepository: new PostgresDeliveryEventRepository(handle.database),
-    mailboxService: buildMailboxService(),
+    mailboxService,
     invalidationStore: noopInvalidationStore(),
     auditRecorder: createPostgresAuditEventRecorder(handle.database, logger),
   });
@@ -80,8 +98,10 @@ function buildServices() {
     deliveryEventService,
     reputationRepository: new PostgresReputationRepository(handle.database),
     auditRecorder: createPostgresAuditEventRecorder(handle.database, logger),
+    mailboxService,
+    domainIntelligenceService: fakeDomainIntelligenceService(),
   });
-  return { deliveryEventService, reputationService };
+  return { deliveryEventService, reputationService, mailboxService };
 }
 
 async function seedEvents(deliveryEventService: DeliveryEventService, tenantId: TenantId, mailboxId: MailboxId, count: number, eventType: "DELIVERED" | "BOUNCED" | "COMPLAINT") {
@@ -186,5 +206,94 @@ describe("ReputationService.assessReputation", () => {
     const assessment = await reputationService.assessReputation(tenant.id, mailbox.id);
     const serialized = JSON.stringify(assessment);
     expect(serialized).not.toMatch(/accessToken|refreshToken|password|secretData|Authorization/i);
+  });
+
+  describe("provider/domain-level aggregation (Stage 11)", () => {
+    it("providerReputation aggregates evidence across every mailbox on that provider for the tenant, not just the assessed one", async () => {
+      const { tenant, mailbox: mailboxA } = await createTenantAndMailbox("provider-a@example.com");
+      const mailboxB = await new PostgresMailboxRepository(handle.database).create({ tenantId: tenant.id, emailAddress: "provider-b@example.com", provider: "GMAIL" });
+      const { deliveryEventService, reputationService } = buildServices();
+
+      // Mailbox A itself is clean; mailbox B (same tenant, same provider) is bouncing heavily.
+      await seedEvents(deliveryEventService, tenant.id, mailboxA.id, 15, "DELIVERED");
+      await seedEvents(deliveryEventService, tenant.id, mailboxB.id, 8, "DELIVERED");
+      await seedEvents(deliveryEventService, tenant.id, mailboxB.id, 8, "BOUNCED");
+
+      const assessment = await reputationService.assessReputation(tenant.id, mailboxA.id);
+      expect(assessment.status).toBe("HEALTHY"); // mailbox A's own evidence is clean
+      expect(assessment.providerReputation.provider).toBe("GMAIL");
+      expect(assessment.providerReputation.factors.map((f) => f.code)).toContain("PROVIDER_HIGH_BOUNCE_RATE");
+      expect(assessment.providerReputation.lifetime.eventCount).toBe(31); // 15 + 8 + 8, across both mailboxes
+    });
+
+    it("domainReputation aggregates evidence across every mailbox on that sending domain for the tenant", async () => {
+      const { tenant, mailbox: mailboxA } = await createTenantAndMailbox("domain-a@shared-domain.com");
+      const mailboxB = await new PostgresMailboxRepository(handle.database).create({ tenantId: tenant.id, emailAddress: "domain-b@shared-domain.com", provider: "MICROSOFT365" });
+      const { deliveryEventService, reputationService } = buildServices();
+
+      await seedEvents(deliveryEventService, tenant.id, mailboxA.id, 10, "DELIVERED");
+      await seedEvents(deliveryEventService, tenant.id, mailboxB.id, 8, "DELIVERED");
+      await seedEvents(deliveryEventService, tenant.id, mailboxB.id, 8, "COMPLAINT");
+
+      const assessment = await reputationService.assessReputation(tenant.id, mailboxA.id);
+      expect(assessment.domainReputation.domain).toBe("shared-domain.com");
+      expect(assessment.domainReputation.factors.map((f) => f.code)).toContain("DOMAIN_COMPLAINT_SIGNAL");
+      expect(assessment.domainReputation.authentication).toEqual({ mx: "PASS", spf: "PASS", dkim: "MISSING", dmarc: "PASS" });
+    });
+
+    it("providerReputation is UNKNOWN when there is no evidence at all, never a fabricated GOOD/SAFE status", async () => {
+      const { tenant, mailbox } = await createTenantAndMailbox();
+      const { reputationService } = buildServices();
+
+      const assessment = await reputationService.assessReputation(tenant.id, mailbox.id);
+      expect(assessment.providerReputation.status).toBe("UNKNOWN");
+      expect(assessment.domainReputation.status).toBe("UNKNOWN");
+    });
+
+    it("provider/domain aggregation is tenant-isolated — another tenant's mailboxes on the same provider/domain never leak in", async () => {
+      const { tenant: tenantA, mailbox: mailboxA } = await createTenantAndMailbox("isolated-a@isolated-domain.com");
+      const tenantB = await new PostgresTenantRepository(handle.database).create({ name: "Isolated Tenant B" });
+      const mailboxB = await new PostgresMailboxRepository(handle.database).create({ tenantId: tenantB.id, emailAddress: "isolated-b@isolated-domain.com", provider: "GMAIL" });
+      const { deliveryEventService, reputationService } = buildServices();
+
+      // Tenant B's mailbox (same provider, same domain name) bounces heavily.
+      await seedEvents(deliveryEventService, tenantB.id, mailboxB.id, 8, "DELIVERED");
+      await seedEvents(deliveryEventService, tenantB.id, mailboxB.id, 8, "BOUNCED");
+      await seedEvents(deliveryEventService, tenantA.id, mailboxA.id, 15, "DELIVERED");
+
+      const assessment = await reputationService.assessReputation(tenantA.id, mailboxA.id);
+      expect(assessment.providerReputation.factors.map((f) => f.code)).not.toContain("PROVIDER_HIGH_BOUNCE_RATE");
+      expect(assessment.domainReputation.factors.map((f) => f.code)).not.toContain("DOMAIN_HIGH_BOUNCE_RATE");
+      expect(assessment.providerReputation.lifetime.eventCount).toBe(15);
+      expect(assessment.domainReputation.lifetime.eventCount).toBe(15);
+    });
+
+    it("records PROVIDER_REPUTATION_DEGRADED exactly once on the transition into a degraded provider-wide status", async () => {
+      const { tenant, mailbox: mailboxA } = await createTenantAndMailbox("degrade-a@example.com");
+      const mailboxB = await new PostgresMailboxRepository(handle.database).create({ tenantId: tenant.id, emailAddress: "degrade-b@example.com", provider: "GMAIL" });
+      const { deliveryEventService, reputationService } = buildServices();
+
+      await seedEvents(deliveryEventService, tenant.id, mailboxA.id, 15, "DELIVERED");
+      await reputationService.assessReputation(tenant.id, mailboxA.id); // provider-wide HEALTHY (only mailbox A's clean evidence so far)
+
+      await seedEvents(deliveryEventService, tenant.id, mailboxB.id, 8, "DELIVERED");
+      await seedEvents(deliveryEventService, tenant.id, mailboxB.id, 8, "BOUNCED");
+      await reputationService.assessReputation(tenant.id, mailboxA.id); // now provider-wide degraded
+      await reputationService.assessReputation(tenant.id, mailboxA.id); // stays degraded — no re-fire
+
+      const degraded = await handle.database.query("SELECT id FROM audit_events WHERE event_type = 'PROVIDER_REPUTATION_DEGRADED' AND tenant_id = $1", [tenant.id]);
+      expect(degraded).toHaveLength(1);
+    });
+
+    it("persists provider_reputation and domain_reputation JSONB columns that round-trip correctly through history", async () => {
+      const { tenant, mailbox } = await createTenantAndMailbox();
+      const { deliveryEventService, reputationService } = buildServices();
+      await seedEvents(deliveryEventService, tenant.id, mailbox.id, 10, "DELIVERED");
+
+      await reputationService.assessReputation(tenant.id, mailbox.id);
+      const history = await reputationService.getHistory(tenant.id, mailbox.id);
+      expect(history[0]?.providerReputation.provider).toBe("GMAIL");
+      expect(history[0]?.domainReputation.domain).toBe("example.com");
+    });
   });
 });

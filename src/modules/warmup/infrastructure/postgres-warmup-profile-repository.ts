@@ -15,12 +15,14 @@ interface WarmupProfileRow {
   risk_tolerance: RiskTolerance;
   active: boolean;
   pause_conditions: string[];
+  window_start_minute: number | null;
+  window_end_minute: number | null;
   created_at: Date;
   updated_at: Date;
 }
 
 const SELECT_COLUMNS =
-  "id, tenant_id, mailbox_id, target_daily_volume, starting_daily_volume, maximum_daily_volume, ramp_strategy, risk_tolerance, active, pause_conditions, created_at, updated_at";
+  "id, tenant_id, mailbox_id, target_daily_volume, starting_daily_volume, maximum_daily_volume, ramp_strategy, risk_tolerance, active, pause_conditions, window_start_minute, window_end_minute, created_at, updated_at";
 
 function mapRow(row: WarmupProfileRow): WarmupProfile {
   return {
@@ -34,6 +36,9 @@ function mapRow(row: WarmupProfileRow): WarmupProfile {
     riskTolerance: row.risk_tolerance,
     active: row.active,
     pauseConditions: row.pause_conditions,
+    ...(row.window_start_minute !== null && row.window_end_minute !== null
+      ? { windowStartMinute: row.window_start_minute, windowEndMinute: row.window_end_minute }
+      : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -45,8 +50,8 @@ export class PostgresWarmupProfileRepository implements WarmupProfileRepository 
   async create(input: CreateWarmupProfileInput): Promise<WarmupProfile> {
     const rows = await this.db.query<WarmupProfileRow>(
       `INSERT INTO warmup_profiles
-         (tenant_id, mailbox_id, target_daily_volume, starting_daily_volume, maximum_daily_volume, ramp_strategy, risk_tolerance, pause_conditions)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         (tenant_id, mailbox_id, target_daily_volume, starting_daily_volume, maximum_daily_volume, ramp_strategy, risk_tolerance, pause_conditions, window_start_minute, window_end_minute)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING ${SELECT_COLUMNS}`,
       [
         input.tenantId,
@@ -57,6 +62,8 @@ export class PostgresWarmupProfileRepository implements WarmupProfileRepository 
         input.rampStrategy,
         input.riskTolerance,
         JSON.stringify(input.pauseConditions ?? []),
+        input.windowStartMinute ?? null,
+        input.windowEndMinute ?? null,
       ],
     );
     return mapRow(expectOne(rows, "warmup_profiles insert"));
@@ -78,7 +85,9 @@ export class PostgresWarmupProfileRepository implements WarmupProfileRepository 
            maximum_daily_volume = COALESCE($5, maximum_daily_volume),
            ramp_strategy = COALESCE($6, ramp_strategy),
            risk_tolerance = COALESCE($7, risk_tolerance),
-           pause_conditions = COALESCE($8::jsonb, pause_conditions)
+           pause_conditions = COALESCE($8::jsonb, pause_conditions),
+           window_start_minute = COALESCE($9, window_start_minute),
+           window_end_minute = COALESCE($10, window_end_minute)
        WHERE tenant_id = $1 AND mailbox_id = $2
        RETURNING ${SELECT_COLUMNS}`,
       [
@@ -90,6 +99,8 @@ export class PostgresWarmupProfileRepository implements WarmupProfileRepository 
         input.rampStrategy ?? null,
         input.riskTolerance ?? null,
         input.pauseConditions ? JSON.stringify(input.pauseConditions) : null,
+        input.windowStartMinute ?? null,
+        input.windowEndMinute ?? null,
       ],
     );
     if (!rows[0]) {

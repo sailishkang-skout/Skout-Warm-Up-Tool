@@ -40,6 +40,15 @@ export interface Mailbox {
   /** Operational on/off switch, independent of `status` — a mailbox can be enabled but DISCONNECTED, or disabled but still CONNECTED. */
   readonly enabled: boolean;
   readonly displayName?: string;
+  /**
+   * IANA identifier (e.g. `"America/New_York"`), never a raw UTC offset
+   * (Stage 12 — see `warmup/domain/send-window.ts`'s doc comment for why).
+   * Defaults to `"UTC"` at the database level so every mailbox created
+   * before Stage 12 keeps behaving exactly as it did — `warmup/domain/warmup-day.ts`'s
+   * UTC-calendar-day model is unaffected; this is used only by the
+   * separate, opt-in send-window check.
+   */
+  readonly timezone: string;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }

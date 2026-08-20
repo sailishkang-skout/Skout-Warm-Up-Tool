@@ -43,4 +43,19 @@ export interface DeliveryEventRepository {
    * caller derives one from the other).
    */
   countByEventType(tenantId: TenantId, mailboxId: MailboxId, windowStart: Date, windowEnd: Date): Promise<DeliveryEventCounts>;
+  /**
+   * Same grouped-aggregate shape as `countByEventType`, scoped to every
+   * mailbox this tenant sends through `provider` instead of one mailbox
+   * (Stage 11 spec section 2). Still tenant-scoped — never aggregates
+   * across tenants.
+   */
+  countByEventTypeForProvider(tenantId: TenantId, provider: MailboxProviderType, windowStart: Date, windowEnd: Date): Promise<DeliveryEventCounts>;
+  /**
+   * Same shape again, scoped to every mailbox this tenant sends through the
+   * given sending domain (Stage 11 spec section 3) — joins to `mailboxes`
+   * to derive the domain, since `delivery_events` itself carries no domain
+   * column (no schema change needed to capture it: the mailbox's own
+   * `email_address_canonical` already determines it).
+   */
+  countByEventTypeForDomain(tenantId: TenantId, domain: string, windowStart: Date, windowEnd: Date): Promise<DeliveryEventCounts>;
 }

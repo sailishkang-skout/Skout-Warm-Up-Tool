@@ -34,6 +34,20 @@
   corroborating factors, never one noisy signal. Omitting `reputation`
   entirely behaves exactly as before Stage 10 — every pre-existing caller
   and test keeps working unchanged.
+- **Stage 11**: `input.reputation.providerReputation`/`.domainReputation`
+  (always present on a `ReputationAssessment`, see
+  `reputation/domain/reputation-assessment.ts`) are read the same way, via
+  their own allowlists (`PROVIDER_`/`DOMAIN_`-prefixed factor codes) and
+  their own weights — roughly half the mailbox-level equivalents above,
+  since this evidence is real context (a provider-wide or domain-wide
+  delivery problem) but one step removed from "this specific mailbox is
+  unsafe." A mailbox with a perfectly clean own history can still see
+  elevated — never CRITICAL from provider/domain evidence alone — risk if
+  its provider or sending domain is struggling tenant-wide. This module
+  still never re-derives a rate or trend itself; it only reads
+  `reputation`'s already-computed, already-gated conclusions at all three
+  scopes.
 
 **Target stage**: Stage 7 (mailbox intelligence & warmup baseline), Stage
-10 (reputation-derived risk factors).
+10 (mailbox-level reputation-derived risk factors), Stage 11
+(provider-/domain-level reputation-derived risk factors).

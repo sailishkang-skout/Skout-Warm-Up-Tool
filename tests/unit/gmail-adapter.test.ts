@@ -118,6 +118,62 @@ describe("GmailAdapter — configured", () => {
     await expect(adapter.oauth.refreshAccessToken("token")).rejects.toMatchObject({ retryable: true });
   });
 
+  describe("refreshAccessToken timeout (Stage 12.1)", () => {
+    // AbortSignal.timeout firing rejects fetch with a DOMException named
+    // "TimeoutError" — mocked directly here (rather than waiting out a
+    // real timeout) for a fast, deterministic test, same technique this
+    // file already uses for other network-failure classification tests.
+    function timeoutError(): DOMException {
+      return new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    }
+
+    it("classifies a timed-out refresh distinctly: retryable, reason 'timeout', never conflated with a generic network failure", async () => {
+      const fetchImpl = vi.fn().mockRejectedValue(timeoutError());
+      const adapter = new GmailAdapter({ config: CONFIG, fetchImpl, refreshTimeoutMs: 50 });
+
+      await expect(adapter.oauth.refreshAccessToken("token")).rejects.toMatchObject({
+        retryable: true,
+        details: { reason: "timeout" },
+      });
+    });
+
+    it("a generic network failure (not a timeout) is classified with reason 'network_failure', still retryable", async () => {
+      const fetchImpl = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+      const adapter = new GmailAdapter({ config: CONFIG, fetchImpl });
+
+      await expect(adapter.oauth.refreshAccessToken("token")).rejects.toMatchObject({
+        retryable: true,
+        details: { reason: "network_failure" },
+      });
+    });
+
+    it("passes an AbortSignal to the token-endpoint fetch so the configured timeout actually applies", async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ access_token: "at", expires_in: 3600 }));
+      const adapter = new GmailAdapter({ config: CONFIG, fetchImpl, refreshTimeoutMs: 5_000 });
+
+      await adapter.oauth.refreshAccessToken("token");
+
+      const [, requestInit] = fetchImpl.mock.calls[0] as [string, RequestInit];
+      expect(requestInit.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it("a fast, successful refresh under a short configured timeout is never misclassified as a timeout", async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ access_token: "at-fast", expires_in: 3600 }));
+      const adapter = new GmailAdapter({ config: CONFIG, fetchImpl, refreshTimeoutMs: 50 });
+
+      const tokenSet = await adapter.oauth.refreshAccessToken("token");
+      expect(tokenSet.accessToken).toBe("at-fast");
+    });
+
+    it("the adapter can be constructed with no explicit refreshTimeoutMs and still refreshes successfully (default applies)", async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ access_token: "at-default", expires_in: 3600 }));
+      const adapter = new GmailAdapter({ config: CONFIG, fetchImpl });
+
+      const tokenSet = await adapter.oauth.refreshAccessToken("token");
+      expect(tokenSet.accessToken).toBe("at-default");
+    });
+  });
+
   it("validateConnection returns NOT_CONFIGURED when no credential is supplied", async () => {
     const adapter = new GmailAdapter({ config: CONFIG, fetchImpl: vi.fn() });
     const result = await adapter.validateConnection(undefined);

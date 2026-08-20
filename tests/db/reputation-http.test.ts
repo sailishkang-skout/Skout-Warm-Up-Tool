@@ -218,6 +218,52 @@ describe("reputation HTTP endpoints", () => {
     await app.close();
   });
 
+  it("the reputation response exposes providerReputation and domainReputation alongside the mailbox-level view (Stage 11)", async () => {
+    mockHealthyDomain();
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
+    const { apiKey } = await bootstrapTenantAndCredential("Provider Domain Visibility Co");
+    const mailboxId = await createMailbox(app, apiKey, "visibility@example.com");
+
+    await ingestEvents(app, apiKey, mailboxId, 8, "DELIVERED");
+    await ingestEvents(app, apiKey, mailboxId, 8, "BOUNCED");
+    await app.inject({ method: "GET", url: `/api/v1/mailboxes/${mailboxId}/risk`, headers: { authorization: `Bearer ${apiKey}` } });
+
+    const response = await app.inject({ method: "GET", url: `/api/v1/mailboxes/${mailboxId}/reputation`, headers: { authorization: `Bearer ${apiKey}` } });
+    const body = response.json();
+    expect(body.providerReputation.provider).toBe("GMAIL");
+    expect(body.providerReputation.factors.map((f: { code: string }) => f.code)).toContain("PROVIDER_HIGH_BOUNCE_RATE");
+    expect(body.domainReputation.domain).toBe("example.com");
+    expect(body.domainReputation.authentication).toEqual({ mx: "PASS", spf: "PASS", dkim: "MISSING", dmarc: "PASS" });
+
+    await app.close();
+  });
+
+  it("a mailbox with a perfectly clean own send history still shows elevated risk because its provider is struggling tenant-wide (Stage 11 feedback loop)", async () => {
+    mockHealthyDomain();
+    const app = await buildApp(testConfig, silentLogger, handle.database, redis);
+    const { apiKey } = await bootstrapTenantAndCredential("Shared Provider Co");
+    const cleanMailboxId = await createMailbox(app, apiKey, "clean@example.com");
+    const noisyMailboxId = await createMailbox(app, apiKey, "noisy@example.com");
+
+    // The noisy mailbox (same tenant, same GMAIL provider) bounces heavily.
+    await ingestEvents(app, apiKey, noisyMailboxId, 8, "DELIVERED");
+    await ingestEvents(app, apiKey, noisyMailboxId, 8, "BOUNCED");
+    // The clean mailbox has no delivery problems of its own.
+    await ingestEvents(app, apiKey, cleanMailboxId, 15, "DELIVERED");
+
+    const riskResponse = await app.inject({ method: "GET", url: `/api/v1/mailboxes/${cleanMailboxId}/risk`, headers: { authorization: `Bearer ${apiKey}` } });
+    const risk = riskResponse.json();
+    expect(risk.riskFactors.map((f: { code: string }) => f.code)).toContain("PROVIDER_HIGH_BOUNCE_RATE");
+    expect(risk.riskScore).toBeGreaterThan(0);
+
+    const reputationResponse = await app.inject({ method: "GET", url: `/api/v1/mailboxes/${cleanMailboxId}/reputation`, headers: { authorization: `Bearer ${apiKey}` } });
+    const reputation = reputationResponse.json();
+    expect(reputation.status).toBe("HEALTHY"); // this mailbox's OWN evidence is clean
+    expect(reputation.providerReputation.factors.map((f: { code: string }) => f.code)).toContain("PROVIDER_HIGH_BOUNCE_RATE");
+
+    await app.close();
+  });
+
   it("response never exposes internal threshold constants or raw event metadata", async () => {
     mockHealthyDomain();
     const app = await buildApp(testConfig, silentLogger, handle.database, redis);

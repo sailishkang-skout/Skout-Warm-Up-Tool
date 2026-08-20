@@ -7,6 +7,8 @@ export interface CreateMailboxInput {
   readonly provider: MailboxProviderType;
   readonly displayName?: string;
   readonly status?: MailboxStatus;
+  /** IANA identifier, already validated by the caller (`mailbox-service.ts`) — defaults to `"UTC"` at the database level when omitted. */
+  readonly timezone?: string;
 }
 
 /**

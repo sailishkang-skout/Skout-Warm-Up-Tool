@@ -176,4 +176,27 @@ describe("evaluateReputation", () => {
     expect(result.factors.map((f) => f.code)).toContain("HIGH_BOUNCE_RATE");
     void longHealthyHistory;
   });
+
+  describe("codePrefix option (Stage 11 — reused for provider/domain aggregation)", () => {
+    const bouncy = counts({ DELIVERED: 8, BOUNCED: 2 }); // 20% bounce
+
+    it("prefixes every factor code without changing which factors trigger", () => {
+      const unprefixed = evaluateReputation(input({ last24h: bouncy, lifetime: bouncy }));
+      const prefixed = evaluateReputation(input({ last24h: bouncy, lifetime: bouncy }), { codePrefix: "PROVIDER_" });
+      expect(prefixed.factors.map((f) => f.code)).toEqual(unprefixed.factors.map((f) => `PROVIDER_${f.code}`));
+    });
+
+    it("evaluates identically (status/confidence/trends/windows) regardless of codePrefix — only factor codes change", () => {
+      const unprefixed = evaluateReputation(input({ last24h: bouncy, lifetime: bouncy }));
+      const prefixed = evaluateReputation(input({ last24h: bouncy, lifetime: bouncy }), { codePrefix: "DOMAIN_" });
+      expect(prefixed.status).toBe(unprefixed.status);
+      expect(prefixed.confidence).toBe(unprefixed.confidence);
+      expect(prefixed.last24h).toEqual(unprefixed.last24h);
+    });
+
+    it("omitting codePrefix produces byte-identical codes to before Stage 11 (backward compatible)", () => {
+      const result = evaluateReputation(input({ last24h: bouncy, lifetime: bouncy }));
+      expect(result.factors.map((f) => f.code)).toContain("HIGH_BOUNCE_RATE");
+    });
+  });
 });

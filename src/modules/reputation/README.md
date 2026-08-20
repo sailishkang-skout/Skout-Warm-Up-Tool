@@ -1,17 +1,17 @@
 # Reputation Intelligence
 
-**Scope note (Stage 10)**: this module's originally-planned scope (below,
-under "Future: provider/domain-level signals") targeted Stage 11 and was
-strictly provider/domain-wide, read-only, producing no scores or decisions
-of its own. Stage 10 deliberately widens that scope now: mailbox-level,
-delivery-evidence-derived reputation *assessment* — with its own status,
-factors, trends, and confidence — lives here too, because it is the same
-kind of fact (reputation intelligence about a mailbox's sending) and Stage
-10's spec is explicit and detailed about building it under this name (API
-at `/reputation`, audit events named `REPUTATION_*`). This is a deliberate,
-documented widening, not a silent redesign — the original provider/domain
-scope below is unaffected and remains real future work; it becomes a
-second signal source feeding the same module, not a replacement.
+**Scope note (Stage 10, updated Stage 11)**: this module originally planned
+a strictly provider/domain-wide, read-only scope for a later stage. Stage 10
+deliberately widened it early: mailbox-level, delivery-evidence-derived
+reputation *assessment* — with its own status, factors, trends, and
+confidence — because it is the same kind of fact (reputation intelligence
+about a mailbox's sending) and Stage 10's spec was explicit and detailed
+about building it under this name (API at `/reputation`, audit events named
+`REPUTATION_*`). Stage 11 then completed the originally-planned scope on
+schedule: provider-level and domain-level reputation, below. Both scopes now
+live in one module, sharing one evaluation function
+(`application/reputation-policy.ts#evaluateReputation`) and one persisted,
+append-only assessment row per mailbox.
 
 **Responsibility (Stage 10 — mailbox-level)**: aggregates a *single
 mailbox's own* delivery-event history (`delivery-events` module) into
@@ -78,16 +78,65 @@ spec section 9/16).
   route; never exposes the internal threshold constants
   `reputation-policy.ts` uses, only their derived output.
 
-## Future: provider/domain-level signals (originally Stage 11)
+## Provider- and domain-level reputation (Stage 11)
 
-Aggregates provider-level and domain-level reputation signals
-(`provider_signals` — not yet built) that aren't specific to a single
-mailbox's own send/receive history — e.g. provider-observed throttling
-classes, sender reputation indicators available from a given
-provider/IP/domain combination. Would feed `health`/`risk` as an
-*additional* signal source, read-only, producing no scores or decisions of
-its own — unaffected by Stage 10's addition above, and still real future
-work.
+Extends the same module and the exact same evaluation function
+(`application/reputation-policy.ts#evaluateReputation`) rather than building
+a second engine — the only thing that differs between mailbox-, provider-,
+and domain-scoped reputation is which `DeliveryEventCounts` are fed in
+(`evaluateReputation(counts, { codePrefix })`). No `ProviderRiskEngine`,
+`DomainRiskEngine`, or second capacity algorithm was created (Stage 11 spec:
+"do not create another intelligence/warmup module").
 
-**Target stage**: Stage 10 (mailbox-level reputation), later stage
-(provider/domain-level signals, originally planned as Stage 11).
+- **`ProviderReputationSnapshot`** (`domain/reputation-assessment.ts`) —
+  aggregates delivery-event evidence across *every mailbox this tenant
+  sends through a given provider* (never across tenants — enforced at the
+  query level, see `delivery-events/infrastructure/postgres-delivery-event-repository.ts`'s
+  `countByEventTypeForProvider`). Factor codes are prefixed `PROVIDER_`
+  (e.g. `PROVIDER_HIGH_BOUNCE_RATE`) so they can never collide with the
+  mailbox-scoped codes once both flow into `risk`.
+- **`DomainReputationSnapshot`** — the same, aggregated across every mailbox
+  sharing a sending domain (`countByEventTypeForDomain`, joined against
+  `mailboxes.email_address_canonical` — no new column on `delivery_events`
+  was needed). Also carries `authentication` (MX/SPF/DKIM/DMARC status
+  only), reused directly from `domain-intelligence` rather than re-checked
+  (Stage 11 spec: "do not duplicate DNS checks"). Those auth facts already
+  flow into `risk` independently via `health.domain` — `authentication`
+  here is for visibility only and is never itself re-fed into a risk
+  factor, which would double-count the same evidence; only the
+  delivery-event-driven `factors` (genuinely new evidence) are.
+- **Persistence**: both snapshots are computed in the same assessment cycle
+  as the mailbox-level view and embedded in the *same*
+  `reputation_assessments` row (`migrations/020_add_provider_domain_reputation.sql`,
+  additive — 001-019 untouched) rather than two new tables. From a
+  consumer's perspective they're the same fact ("reputation evidence
+  available when this mailbox was assessed"), and embedding them gives them
+  the same append-only history, tenant isolation, and `GET /:id/reputation`
+  API surface for free — no new tables, no new endpoints.
+- **`application/reputation-service.ts`** — `assessReputation` now also
+  depends on `mailboxService` (to resolve the mailbox's `provider` and
+  sending domain) and `domainIntelligenceService` (reused, cached DNS
+  facts). Fetches all three scopes' rolling windows in one `Promise.all`.
+- **Audit**: `PROVIDER_REPUTATION_DEGRADED`/`_RECOVERED` and
+  `DOMAIN_REPUTATION_DEGRADED`/`_RECOVERED`, mirroring the mailbox-level
+  `REPUTATION_DEGRADED`/`_RECOVERED` pattern exactly — fired only on a
+  status-tier transition, detected against *this mailbox's own previous
+  assessment's* embedded provider/domain snapshot (there is no separate
+  per-provider/per-domain "last known status" store). **Known, deliberate
+  limitation**: if several mailboxes share a provider/domain, each may
+  independently detect and audit the same underlying transition around the
+  same time — some redundancy, but each event remains a true, safe
+  statement, and a dedicated cross-mailbox transition store would be new
+  persistence this stage's evidence doesn't yet justify.
+- **Invalidation**: unchanged — a new delivery event still only marks *its
+  own mailbox* stale (`assessment-invalidation-store.ts`). A delivery event
+  affecting mailbox A does **not** invalidate mailbox B's cached assessment
+  even if B shares A's provider/domain; B picks up the fresher provider/
+  domain evidence on its own next natural refresh. This is deliberate
+  restraint (Stage 11 spec section 8: "do not invalidate unrelated
+  mailboxes unnecessarily... avoid excessive recalculation"), not a gap —
+  no queue or fan-out mechanism was introduced.
+- **Risk integration** — see `risk/README.md`.
+
+**Target stage**: Stage 10 (mailbox-level reputation), Stage 11
+(provider-level and domain-level reputation).

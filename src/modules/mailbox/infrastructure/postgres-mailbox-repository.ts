@@ -13,12 +13,13 @@ interface MailboxRow {
   status: MailboxStatus;
   enabled: boolean;
   display_name: string | null;
+  timezone: string;
   created_at: Date;
   updated_at: Date;
 }
 
 const SELECT_COLUMNS =
-  "id, tenant_id, email_address, email_address_canonical, provider, status, enabled, display_name, created_at, updated_at";
+  "id, tenant_id, email_address, email_address_canonical, provider, status, enabled, display_name, timezone, created_at, updated_at";
 
 function mapRow(row: MailboxRow): Mailbox {
   return {
@@ -30,6 +31,7 @@ function mapRow(row: MailboxRow): Mailbox {
     status: row.status,
     enabled: row.enabled,
     ...(row.display_name !== null ? { displayName: row.display_name } : {}),
+    timezone: row.timezone,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -41,8 +43,8 @@ export class PostgresMailboxRepository implements MailboxRepository {
   async create(input: CreateMailboxInput): Promise<Mailbox> {
     const canonical = canonicalizeEmailAddress(input.emailAddress);
     const rows = await this.db.query<MailboxRow>(
-      `INSERT INTO mailboxes (tenant_id, email_address, email_address_canonical, provider, status, display_name)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO mailboxes (tenant_id, email_address, email_address_canonical, provider, status, display_name, timezone)
+       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 'UTC'))
        RETURNING ${SELECT_COLUMNS}`,
       [
         input.tenantId,
@@ -51,6 +53,7 @@ export class PostgresMailboxRepository implements MailboxRepository {
         input.provider,
         input.status ?? "PENDING",
         input.displayName ?? null,
+        input.timezone ?? null,
       ],
     );
     return mapRow(expectOne(rows, "mailboxes insert"));

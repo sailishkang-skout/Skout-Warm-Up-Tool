@@ -36,8 +36,19 @@ receives an opaque `ProviderCredential` from the `providers` module's
   not here — see `src/modules/oauth/README.md`. This module only exposes
   the connection-lifecycle primitives (`connectMailbox`, capabilities,
   health/connection/baseline snapshots) that flow depends on.
+- `timezone` (Stage 12) — an IANA identifier (e.g. `"America/New_York"`),
+  never a raw UTC offset; validated via `shared/time`'s `Intl`-backed
+  `isValidIanaTimezone` in `createMailbox`, defaults to `"UTC"` when
+  omitted so every pre-Stage-12 mailbox keeps behaving exactly as before.
+  Set only at creation (`POST /mailboxes`) — there is no field-level update
+  endpoint for any mailbox field yet (`provider`/`emailAddress` are
+  likewise immutable after creation; only the action-style mutators
+  `connect`/`disconnect`/`enable`/`disable` exist). Consumed by
+  `warmup/domain/send-window.ts` to evaluate a mailbox's configured send
+  window in its own local time — see `warmup/README.md`'s "Scheduling
+  (Stage 12)" section.
 
 **Target stage**: Stage 3 (persistence foundation), Stage 5 (lifecycle,
 provider abstraction, `MailboxService`, `/api/v1/mailboxes`), Stage 6
 (audit events on create/disconnect, credential refresh, connection
-health/snapshot/baseline endpoints).
+health/snapshot/baseline endpoints), Stage 12 (`timezone`).
