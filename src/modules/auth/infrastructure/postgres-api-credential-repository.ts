@@ -12,6 +12,7 @@ interface ApiCredentialRow {
   name: string;
   key_prefix: string;
   status: ApiCredentialStatus;
+  privilege: import("../domain/api-credential-privilege.js").ApiCredentialPrivilege;
   expires_at: Date | null;
   last_used_at: Date | null;
   revoked_at: Date | null;
@@ -24,7 +25,7 @@ interface ApiCredentialRowWithHash extends ApiCredentialRow {
 }
 
 const SAFE_COLUMNS =
-  "id, tenant_id, name, key_prefix, status, expires_at, last_used_at, revoked_at, created_at, updated_at";
+  "id, tenant_id, name, key_prefix, status, privilege, expires_at, last_used_at, revoked_at, created_at, updated_at";
 const SAFE_COLUMNS_WITH_HASH = `${SAFE_COLUMNS}, key_hash`;
 
 function mapRow(row: ApiCredentialRow): ApiCredential {
@@ -34,6 +35,7 @@ function mapRow(row: ApiCredentialRow): ApiCredential {
     name: row.name,
     keyPrefix: row.key_prefix,
     status: row.status,
+    privilege: row.privilege,
     ...(row.expires_at !== null ? { expiresAt: row.expires_at } : {}),
     ...(row.last_used_at !== null ? { lastUsedAt: row.last_used_at } : {}),
     ...(row.revoked_at !== null ? { revokedAt: row.revoked_at } : {}),
@@ -51,10 +53,10 @@ export class PostgresApiCredentialRepository implements ApiCredentialRepository 
 
   async create(input: CreateApiCredentialInput): Promise<ApiCredential> {
     const rows = await this.db.query<ApiCredentialRow>(
-      `INSERT INTO api_credentials (tenant_id, name, key_prefix, key_hash, expires_at)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO api_credentials (tenant_id, name, key_prefix, key_hash, expires_at, privilege)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING ${SAFE_COLUMNS}`,
-      [input.tenantId, input.name, input.keyPrefix, input.keyHash, input.expiresAt ?? null],
+      [input.tenantId, input.name, input.keyPrefix, input.keyHash, input.expiresAt ?? null, input.privilege ?? "TENANT"],
     );
     return mapRow(expectOne(rows, "api_credentials insert"));
   }

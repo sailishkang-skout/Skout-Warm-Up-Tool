@@ -57,6 +57,7 @@ describe("authenticateApiKey", () => {
       credentialId: credential.id,
       actorType: "api_key",
       credentialName: credential.name,
+      privilege: "TENANT",
     });
   });
 

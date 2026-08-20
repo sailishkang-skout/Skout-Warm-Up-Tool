@@ -1,4 +1,5 @@
 import type { ApiCredentialId, TenantId } from "../../../shared/types/index.js";
+import type { ApiCredentialPrivilege } from "./api-credential-privilege.js";
 
 export const API_CREDENTIAL_STATUSES = ["ACTIVE", "REVOKED", "EXPIRED"] as const;
 export type ApiCredentialStatus = (typeof API_CREDENTIAL_STATUSES)[number];
@@ -14,6 +15,7 @@ export interface ApiCredential {
   readonly name: string;
   readonly keyPrefix: string;
   readonly status: ApiCredentialStatus;
+  readonly privilege: ApiCredentialPrivilege;
   readonly expiresAt?: Date;
   readonly lastUsedAt?: Date;
   readonly revokedAt?: Date;

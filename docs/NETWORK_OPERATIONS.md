@@ -6,13 +6,25 @@ Partner fleet: `kind = PARTNER` plus `membership_status` and optional
 `owner_tenant_id` / consent timestamps. A mailbox is never a recipient just
 because it exists.
 
-Pause/quarantine of **owned** partner members:
+Membership lifecycle: INVITED → PENDING_APPROVAL → ACTIVE → PAUSED /
+QUARANTINED / SUSPENDED / REMOVED.
 
-`POST /api/v1/warmup-network/mailboxes/:id/pause`
-`POST /api/v1/warmup-network/mailboxes/:id/quarantine`
+Owned partner member APIs (tenant must match `owner_tenant_id`):
 
-These succeed only when `owner_tenant_id` matches the authenticated tenant.
+- `POST /api/v1/warmup-network/mailboxes/:id/pause`
+- `POST /api/v1/warmup-network/mailboxes/:id/resume`
+- `POST /api/v1/warmup-network/mailboxes/:id/quarantine`
+- `POST /api/v1/warmup-network/mailboxes/:id/consent`
+- `POST /api/v1/warmup-network/mailboxes/:id/leave`
+
 Skout-internal members (null owner) cannot be mutated by customer API keys.
 
-Kill switch: `POST /api/v1/operations/kill-switches` and
-`WARMUP_KILL_SWITCH_GLOBAL`.
+`GET /api/v1/warmup-network/health` is aggregate counts, not a risk decision.
+
+Network policy (ALLOW/DEFER/REDUCE/block) may shrink routing. It does not
+set mailbox risk to LOW.
+
+Kill switch: `POST /api/v1/operations/kill-switches` (operator for
+GLOBAL/PROVIDER/NETWORK) and `WARMUP_KILL_SWITCH_GLOBAL`.
+
+Keep `WARMUP_NETWORK_ROUTING_MODE=off` until a real eligible fleet exists.

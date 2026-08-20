@@ -245,7 +245,7 @@ Privacy: conversation APIs can return `textBody`. Treat that as PII. Integration
 - Provider send timeout is hardcoded per adapter (~15s). Credential refresh timeout: `PROVIDER_CREDENTIAL_REFRESH_TIMEOUT_MS` (default 10s).
 - `/health` — process alive (no deps). `/readiness` — Postgres + Redis ping (503 if either down).
 - Structured JSON logs (pino). Do not log raw keys.
-- Warmup network (global partner **recipients**): leave `WARMUP_NETWORK_ROUTING_MODE=off` until a real eligible fleet exists. Seed with existing mailbox OAuth then SQL `INSERT` into `warmup_network_*`. Tenants cannot mutate the global pool. Distinct from tenant sending-identity pools (030). See `docs/WARMUP_NETWORK.md`.
+- Warmup network (global partner **recipients**): leave `WARMUP_NETWORK_ROUTING_MODE=off` until a real eligible fleet exists. Seed with existing mailbox OAuth then SQL `INSERT` into `warmup_network_*`. Tenants cannot mutate the global pool. Distinct from tenant sending-identity pools (030). See `docs/WARMUP_NETWORK.md`. Google/Microsoft **directory** provisioning stays `NOT_CONFIGURED` until reseller/CSP env is set; code existence is not production activation.
 
 ---
 

@@ -103,6 +103,8 @@ export function createTestDatabaseHandle(): TestDatabaseHandle {
 /** Drops every object migrations create, for tests that exercise the migration runner itself from empty state. */
 export async function resetSchema(pool: Pool): Promise<void> {
   await pool.query("DROP TABLE IF EXISTS mailbox_provisioning_jobs CASCADE");
+  await pool.query("DROP TABLE IF EXISTS operational_quarantines CASCADE");
+  await pool.query("DROP TABLE IF EXISTS mailbox_operational_states CASCADE");
   await pool.query("DROP TABLE IF EXISTS operational_kill_switches CASCADE");
   await pool.query("DROP TABLE IF EXISTS warmup_pool_memberships CASCADE");
   await pool.query("DROP TABLE IF EXISTS warmup_pools CASCADE");
@@ -147,6 +149,6 @@ export async function resetSchema(pool: Pool): Promise<void> {
 /** For tests that need the schema in place but a clean set of rows between cases. */
 export async function truncateAppTables(pool: Pool): Promise<void> {
   await pool.query(
-    "TRUNCATE TABLE mailbox_provisioning_jobs, operational_kill_switches, warmup_pool_memberships, warmup_pools, warmup_network_routing_decisions, warmup_network_mailboxes, warmup_network_domains, warmup_network_pools, warmup_networks, integration_events_outbox, conversation_policy_signals, conversation_policy_evaluations, conversation_domain_facts, conversation_classification_facts, conversation_message_classifications, conversation_messages, conversations, mailbox_inbound_sync_state, reputation_assessments, delivery_events, warmup_execution_intents, warmup_decisions, warmup_sessions, warmup_profiles, mailbox_assessments, mailbox_signals, domain_intelligence, connection_attempts, provider_credentials, audit_events, api_credentials, provider_accounts, mailboxes, organization_provider_accounts, customer_domains, tenants RESTART IDENTITY",
+    "TRUNCATE TABLE mailbox_provisioning_jobs, operational_quarantines, mailbox_operational_states, operational_kill_switches, warmup_pool_memberships, warmup_pools, warmup_network_routing_decisions, warmup_network_mailboxes, warmup_network_domains, warmup_network_pools, warmup_networks, integration_events_outbox, conversation_policy_signals, conversation_policy_evaluations, conversation_domain_facts, conversation_classification_facts, conversation_message_classifications, conversation_messages, conversations, mailbox_inbound_sync_state, reputation_assessments, delivery_events, warmup_execution_intents, warmup_decisions, warmup_sessions, warmup_profiles, mailbox_assessments, mailbox_signals, domain_intelligence, connection_attempts, provider_credentials, audit_events, api_credentials, provider_accounts, mailboxes, organization_provider_accounts, customer_domains, tenants RESTART IDENTITY",
   );
 }

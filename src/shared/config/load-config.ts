@@ -25,6 +25,9 @@ export interface AppConfig {
     readonly microsoft?: { readonly clientId: string; readonly clientSecret: string; readonly redirectUri: string };
     /** Stage 12.1 — see schema.ts's `PROVIDER_CREDENTIAL_REFRESH_TIMEOUT_MS` doc comment. Applies to every OAuth-capable adapter, not per-provider, since both currently share the same reasoning. */
     readonly credentialRefreshTimeoutMs: number;
+    readonly allowLiveProviderTests: boolean;
+    readonly googleWorkspace?: { readonly adminEmail: string; readonly serviceAccountFile: string };
+    readonly microsoftDirectory?: { readonly tenantId: string; readonly clientId: string; readonly clientSecret: string };
   };
   readonly ai: {
     readonly provider: "none" | "openai" | "openrouter";
@@ -162,6 +165,24 @@ function toAppConfig(env: EnvShape): AppConfig {
           }
         : {}),
       credentialRefreshTimeoutMs: env.PROVIDER_CREDENTIAL_REFRESH_TIMEOUT_MS,
+      allowLiveProviderTests: env.ALLOW_LIVE_PROVIDER_TESTS === "true",
+      ...(env.GOOGLE_WORKSPACE_ADMIN_EMAIL && env.GOOGLE_WORKSPACE_SERVICE_ACCOUNT_FILE
+        ? {
+            googleWorkspace: {
+              adminEmail: env.GOOGLE_WORKSPACE_ADMIN_EMAIL,
+              serviceAccountFile: env.GOOGLE_WORKSPACE_SERVICE_ACCOUNT_FILE,
+            },
+          }
+        : {}),
+      ...(env.MICROSOFT_CSP_TENANT_ID && env.MICROSOFT_CSP_CLIENT_ID && env.MICROSOFT_CSP_CLIENT_SECRET
+        ? {
+            microsoftDirectory: {
+              tenantId: env.MICROSOFT_CSP_TENANT_ID,
+              clientId: env.MICROSOFT_CSP_CLIENT_ID,
+              clientSecret: env.MICROSOFT_CSP_CLIENT_SECRET,
+            },
+          }
+        : {}),
     },
     ai: {
       provider: env.AI_CLASSIFICATION_PROVIDER,

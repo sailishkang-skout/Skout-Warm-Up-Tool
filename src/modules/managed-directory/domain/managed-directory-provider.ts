@@ -9,6 +9,8 @@ export const MANAGED_DIRECTORY_ERROR_CODES = [
   "ALREADY_EXISTS",
   "NOT_FOUND",
   "PERMISSION_DENIED",
+  "TEMPORARY_FAILURE",
+  "PERMANENT_FAILURE",
   "NOT_CONFIGURED",
   "UNKNOWN",
 ] as const;
@@ -30,13 +32,27 @@ export interface ManagedDirectoryProvider {
   readonly provider: "GMAIL" | "MICROSOFT365";
   getConfigurationStatus(): ProviderConfigurationStatus;
   createCustomer(input: { domain: string; displayName: string }): Promise<ManagedDirectoryResult<{ providerCustomerId: string }>>;
+  getCustomer(input: { providerCustomerId: string }): Promise<ManagedDirectoryResult<{ providerCustomerId: string; domain?: string }>>;
   verifyDomain(input: { providerCustomerId: string; domain: string }): Promise<ManagedDirectoryResult<{ verified: boolean }>>;
+  createSubscription?(input: { providerCustomerId: string; skuId: string }): Promise<ManagedDirectoryResult<{ subscriptionId: string }>>;
+  getSubscription?(input: { providerCustomerId: string; subscriptionId: string }): Promise<ManagedDirectoryResult<{ subscriptionId: string; status: string }>>;
   createMailbox(input: {
     providerCustomerId: string;
     emailAddress: string;
     displayName?: string;
   }): Promise<ManagedDirectoryResult<{ providerMailboxId: string }>>;
+  getMailbox(input: {
+    providerCustomerId: string;
+    providerMailboxId: string;
+  }): Promise<ManagedDirectoryResult<{ providerMailboxId: string; emailAddress?: string }>>;
+  updateMailbox?(input: {
+    providerCustomerId: string;
+    providerMailboxId: string;
+    displayName?: string;
+  }): Promise<ManagedDirectoryResult<{ providerMailboxId: string }>>;
   suspendMailbox(input: { providerCustomerId: string; providerMailboxId: string }): Promise<ManagedDirectoryResult<{ suspended: boolean }>>;
+  restoreMailbox(input: { providerCustomerId: string; providerMailboxId: string }): Promise<ManagedDirectoryResult<{ restored: boolean }>>;
+  deleteMailbox(input: { providerCustomerId: string; providerMailboxId: string }): Promise<ManagedDirectoryResult<{ deleted: boolean }>>;
   getHealth(): Promise<ManagedDirectoryResult<{ status: "UNKNOWN" | "HEALTHY" | "DEGRADED" }>>;
 }
 

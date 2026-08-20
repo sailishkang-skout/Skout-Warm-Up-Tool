@@ -7,6 +7,7 @@ import { incrementCounter, METRIC, setGauge } from "../../../shared/observabilit
 import { asWarmupNetworkRoutingDecisionId, type MailboxId, type TenantId } from "../../../shared/types/index.js";
 import type { AppConfig } from "../../../shared/config/index.js";
 import { remainingCapacity, utcDateString } from "../domain/warmup-network-status.js";
+import { evaluateNetworkPolicy } from "../domain/network-policy.js";
 import type { WarmupNetworkRouteResult, WarmupNetworkSelection } from "../domain/warmup-network-routing.js";
 import type { WarmupNetworkMailbox } from "../domain/warmup-network-mailbox.js";
 import {
@@ -161,6 +162,50 @@ export function createWarmupNetworkRouter(deps: {
           }
 
           const candidates = await deps.repository.lockCandidatesForUpdate(client);
+          const policy = evaluateNetworkPolicy({
+            mailboxes: candidates.length,
+            activeMailboxes: candidates.filter((candidate) => candidate.mailbox.status === "ACTIVE").length,
+            degradedMailboxes: candidates.filter((candidate) => candidate.mailbox.status === "DEGRADED").length,
+            quarantinedMailboxes: candidates.filter((candidate) => candidate.mailbox.status === "QUARANTINED").length,
+            credentialUnavailable: candidates.filter((candidate) => !candidate.mailbox.credentialAvailable).length,
+            remainingMailboxCapacityToday: candidates.reduce(
+              (sum, candidate) =>
+                sum +
+                remainingCapacity(
+                  candidate.mailbox.dailyCapacity,
+                  candidate.mailbox.usageDate,
+                  candidate.mailbox.usageCount,
+                  input.now,
+                ),
+              0,
+            ),
+            activeNetworks: candidates.some((candidate) => candidate.networkStatus === "ACTIVE") ? 1 : 0,
+          });
+          if (
+            policy.decision === "TEMPORARY_BLOCK" ||
+            policy.decision === "PERMANENT_BLOCK" ||
+            policy.decision === "DEFER"
+          ) {
+            const decision = await deps.repository.insertDecision(client, {
+              routingRequestKey: input.requestKey,
+              customerTenantId: input.customerTenantId,
+              customerMailboxId: input.customerMailboxId,
+              outcome: "NO_ELIGIBLE_WARMUP_MAILBOX",
+              reason: policy.reason,
+              eligibilitySummary: { networkPolicy: policy.decision, failureClass: policy.decision === "PERMANENT_BLOCK" ? "PERMANENT" : "TEMPORARY" },
+            });
+            await deps.auditRecorder.record({
+              tenantId: input.customerTenantId,
+              eventType: "ROUTE_REJECTED",
+              actorType: "system",
+              metadata: { reason: policy.reason, decision: policy.decision },
+            });
+            return {
+              decision,
+              failureClass: policy.decision === "PERMANENT_BLOCK" ? ("PERMANENT" as const) : ("TEMPORARY" as const),
+            };
+          }
+
           const allowedKinds = allowedNetworkKinds(deps.config.routingMode);
           const evaluated = candidates
             .filter((candidate) => candidate.mailbox.mailboxId !== input.customerMailboxId)
@@ -185,12 +230,18 @@ export function createWarmupNetworkRouter(deps: {
             });
 
           const eligible = evaluated.filter((entry) => entry.eligible).map((entry) => entry.candidate);
+          const selectable =
+            policy.decision === "REDUCE" && eligible.length > 1
+              ? [...eligible]
+                  .sort((left, right) => right.mailbox.healthScore - left.mailbox.healthScore)
+                  .slice(0, Math.max(1, Math.ceil(eligible.length / 2)))
+              : eligible;
           const since = new Date(input.now.getTime() - deps.config.recentInteractionWindowMs);
           const recentIds = new Set(
             (await deps.repository.listRecentSelectedMailboxIds(client, input.customerMailboxId, since)).map((id) => id as string),
           );
           const avoided = applyRecentInteractionAvoidance(
-            eligible.map((candidate) => ({
+            selectable.map((candidate) => ({
               ...candidate,
               id: candidate.mailbox.id,
               provider: candidate.mailbox.provider,
@@ -229,7 +280,7 @@ export function createWarmupNetworkRouter(deps: {
             return { decision, failureClass };
           }
 
-          const picked = eligible.find((candidate) => candidate.mailbox.id === selectedCandidate.id);
+          const picked = selectable.find((candidate) => candidate.mailbox.id === selectedCandidate.id);
           if (!picked) {
             const decision = await deps.repository.insertDecision(client, {
               routingRequestKey: input.requestKey,

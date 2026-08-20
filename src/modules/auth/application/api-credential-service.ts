@@ -9,6 +9,7 @@ import type { ApiCredentialRepository } from "./api-credential-repository.js";
 export interface IssueCredentialInput {
   readonly name: string;
   readonly expiresAt?: Date;
+  readonly privilege?: import("../domain/api-credential-privilege.js").ApiCredentialPrivilege;
 }
 
 export interface IssuedApiCredential {
@@ -73,6 +74,7 @@ export function createApiCredentialService(deps: CreateApiCredentialServiceDeps)
       keyPrefix: generated.prefix,
       keyHash,
       ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+      ...(input.privilege ? { privilege: input.privilege } : {}),
     });
 
     await auditRecorder.record({

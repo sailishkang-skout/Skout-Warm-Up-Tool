@@ -18,6 +18,8 @@ import { warmupPoolRoutes } from "./modules/warmup-pool/api/warmup-pool-routes.j
 import { customerDomainRoutes } from "./modules/customer-domains/api/customer-domain-routes.js";
 import { mailboxProvisioningRoutes } from "./modules/managed-directory/api/mailbox-provisioning-routes.js";
 import { operationsRoutes } from "./modules/operations/api/operations-routes.js";
+import { organizationProviderAccountRoutes } from "./modules/providers/api/organization-provider-account-routes.js";
+import { providerCatalogRoutes } from "./modules/providers/api/provider-catalog-routes.js";
 import { buildServices } from "./composition/build-services.js";
 import { authenticationPlugin } from "./plugins/authentication.js";
 import { errorHandlerPlugin } from "./plugins/error-handler.js";
@@ -87,10 +89,16 @@ export async function buildApp(config: AppConfig, logger: Logger, database: Data
   await app.register(customerDomainRoutes(services.customerDomainService), {
     prefix: "/api/v1/domains",
   });
+  await app.register(organizationProviderAccountRoutes(services.organizationProviderAccountService), {
+    prefix: "/api/v1/provider-accounts",
+  });
+  await app.register(providerCatalogRoutes(services.providerRegistry, services.directoryProviders), {
+    prefix: "/api/v1/providers",
+  });
   await app.register(mailboxProvisioningRoutes(services.mailboxProvisioningService), {
     prefix: "/api/v1/mailboxes",
   });
-  await app.register(operationsRoutes(services.killSwitchService), {
+  await app.register(operationsRoutes(services.killSwitchService, services.quarantineService), {
     prefix: "/api/v1/operations",
   });
 

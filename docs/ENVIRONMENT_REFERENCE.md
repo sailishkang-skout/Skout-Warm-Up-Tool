@@ -122,6 +122,14 @@ or safety-gate. Empty tables still mean there is no live partner fleet.
 | `WARMUP_NETWORK_REQUIRE_SPF` | optional | `true` | `true` | public | yes | **warmup send** | Require domain SPF `PASS`. |
 | `WARMUP_NETWORK_REQUIRE_DKIM` | optional | `true` | `true` | public | yes | **warmup send** | Require domain DKIM `PASS`. |
 | `WARMUP_NETWORK_REQUIRE_DMARC` | optional | `true` | `true` | public | yes | **warmup send** | Require domain DMARC `PASS`. |
+| `ALLOW_LIVE_PROVIDER_TESTS` | optional | `false` | `false` | public | no | tests | Must stay `false` in CI. Live Google/Microsoft directory HTTP is skipped unless explicitly enabled. |
+| `GOOGLE_WORKSPACE_ADMIN_EMAIL` | optional (with file) | unset | `admin@skout.example` | secret-adjacent | loaded | directory | Workspace admin for domain-wide delegation. Pair with service account file. |
+| `GOOGLE_WORKSPACE_SERVICE_ACCOUNT_FILE` | optional (with email) | unset | `/run/secrets/google-sa.json` | **secret file** | loaded | directory | Path to reseller service-account JSON. Never commit the file. |
+| `MICROSOFT_CSP_TENANT_ID` | optional (group) | unset | GUID | public | loaded | directory | Graph/CSP tenant. Pair with client id/secret. |
+| `MICROSOFT_CSP_CLIENT_ID` | optional (group) | unset | GUID | public | loaded | directory | App registration for directory Graph calls. |
+| `MICROSOFT_CSP_CLIENT_SECRET` | optional (group) | unset | — | **secret** | loaded | directory | Never log. Not sufficient for Partner Center customer creation. |
+
+`WARMUP_KILL_SWITCH_GLOBAL` remains the env-level global send pause. DB kill switches cover PROVIDER/NETWORK/TENANT/DOMAIN/MAILBOX. Fleet scopes require an `OPERATOR` API key (`bootstrap-tenant --operator`).
 
 ## Warmup identity pools (Stage 20, sending mailbox)
 

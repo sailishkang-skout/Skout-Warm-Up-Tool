@@ -131,11 +131,31 @@ export function warmupNetworkRoutes(service: WarmupNetworkService): FastifyPlugi
     );
 
     fastify.post<{ Params: { id: string } }>(
-      "/mailboxes/:id/quarantine",
+      "/mailboxes/:id/resume",
       { preHandler: fastify.authenticate },
       async (request) => {
         const tenantId = requireTenantId(request);
-        const mailbox = await service.quarantineMembership(tenantId, parseMailboxId(request.params.id));
+        const mailbox = await service.resumeMembership(tenantId, parseMailboxId(request.params.id));
+        return toSafeMailbox(mailbox);
+      },
+    );
+
+    fastify.post<{ Params: { id: string } }>(
+      "/mailboxes/:id/consent",
+      { preHandler: fastify.authenticate },
+      async (request) => {
+        const tenantId = requireTenantId(request);
+        const mailbox = await service.grantConsent(tenantId, parseMailboxId(request.params.id));
+        return toSafeMailbox(mailbox);
+      },
+    );
+
+    fastify.post<{ Params: { id: string } }>(
+      "/mailboxes/:id/leave",
+      { preHandler: fastify.authenticate },
+      async (request) => {
+        const tenantId = requireTenantId(request);
+        const mailbox = await service.revokeConsent(tenantId, parseMailboxId(request.params.id));
         return toSafeMailbox(mailbox);
       },
     );

@@ -93,6 +93,12 @@ export const envSchema = z
     WARMUP_MAX_DOMAIN_SHARE_PERCENT: z.coerce.number().int().min(1).max(100).default(70),
     WARMUP_MAX_CONSECUTIVE_SAME_DOMAIN: z.coerce.number().int().min(1).default(2),
     WARMUP_POOL_SELECTION_COOLDOWN_MS: z.coerce.number().int().min(0).default(0),
+    ALLOW_LIVE_PROVIDER_TESTS: z.enum(["true", "false"]).default("false"),
+    GOOGLE_WORKSPACE_ADMIN_EMAIL: z.string().email().optional(),
+    GOOGLE_WORKSPACE_SERVICE_ACCOUNT_FILE: z.string().min(1).optional(),
+    MICROSOFT_CSP_TENANT_ID: z.string().min(1).optional(),
+    MICROSOFT_CSP_CLIENT_ID: z.string().min(1).optional(),
+    MICROSOFT_CSP_CLIENT_SECRET: z.string().min(1).optional(),
   })
   .check((ctx) => {
     if (ctx.value.DB_POOL_MIN > ctx.value.DB_POOL_MAX) {
@@ -134,6 +140,32 @@ export const envSchema = z
         message:
           "MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, and MICROSOFT_REDIRECT_URI must be set together, or not at all",
         path: ["MICROSOFT_CLIENT_ID"],
+        input: ctx.value,
+      });
+    }
+
+    const googleWorkspaceFields = [ctx.value.GOOGLE_WORKSPACE_ADMIN_EMAIL, ctx.value.GOOGLE_WORKSPACE_SERVICE_ACCOUNT_FILE];
+    if (new Set(googleWorkspaceFields.map((v) => v === undefined)).size > 1) {
+      ctx.issues.push({
+        code: "custom",
+        message:
+          "GOOGLE_WORKSPACE_ADMIN_EMAIL and GOOGLE_WORKSPACE_SERVICE_ACCOUNT_FILE must be set together, or not at all",
+        path: ["GOOGLE_WORKSPACE_ADMIN_EMAIL"],
+        input: ctx.value,
+      });
+    }
+
+    const microsoftCspFields = [
+      ctx.value.MICROSOFT_CSP_TENANT_ID,
+      ctx.value.MICROSOFT_CSP_CLIENT_ID,
+      ctx.value.MICROSOFT_CSP_CLIENT_SECRET,
+    ];
+    if (new Set(microsoftCspFields.map((v) => v === undefined)).size > 1) {
+      ctx.issues.push({
+        code: "custom",
+        message:
+          "MICROSOFT_CSP_TENANT_ID, MICROSOFT_CSP_CLIENT_ID, and MICROSOFT_CSP_CLIENT_SECRET must be set together, or not at all",
+        path: ["MICROSOFT_CSP_TENANT_ID"],
         input: ctx.value,
       });
     }

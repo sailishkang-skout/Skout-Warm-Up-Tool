@@ -7,6 +7,7 @@ export interface CreateApiCredentialInput {
   readonly keyPrefix: string;
   readonly keyHash: string;
   readonly expiresAt?: Date;
+  readonly privilege?: import("../domain/api-credential-privilege.js").ApiCredentialPrivilege;
 }
 
 /**

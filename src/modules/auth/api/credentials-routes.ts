@@ -46,6 +46,7 @@ function toSafeCredentialResponse(credential: ApiCredential) {
     id: credential.id,
     name: credential.name,
     prefix: credential.keyPrefix,
+    privilege: credential.privilege,
     status: credential.status,
     expiresAt: credential.expiresAt?.toISOString(),
     lastUsedAt: credential.lastUsedAt?.toISOString(),

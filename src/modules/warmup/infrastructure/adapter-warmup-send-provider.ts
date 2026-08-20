@@ -25,6 +25,11 @@ export interface CreateAdapterWarmupSendProviderDeps {
   readonly warmupNetworkRouter?: WarmupNetworkRouter;
   readonly warmupNetworkRoutingMode?: WarmupNetworkRoutingMode;
   readonly isExecutionPaused?: () => Promise<boolean>;
+  readonly isSendBlocked?: (context: {
+    readonly tenantId: string;
+    readonly mailboxId: string;
+    readonly provider: string;
+  }) => Promise<boolean>;
 }
 
 // The provider-layer outcome vocabulary and warmup's own are identical in
@@ -93,11 +98,20 @@ export function createAdapterWarmupSendProvider(deps: CreateAdapterWarmupSendPro
     warmupNetworkRouter,
     warmupNetworkRoutingMode = "off",
     isExecutionPaused,
+    isSendBlocked,
   } = deps;
 
   return {
     async sendWarmupMessage(command: SendWarmupMessageCommand): Promise<ProviderSendResult> {
-      if (isExecutionPaused && (await isExecutionPaused())) {
+      if (
+        (isSendBlocked &&
+          (await isSendBlocked({
+            tenantId: command.tenantId,
+            mailboxId: command.mailboxId,
+            provider: command.provider,
+          }))) ||
+        (isExecutionPaused && (await isExecutionPaused()))
+      ) {
         return {
           status: "TEMPORARY_FAILURE",
           provider: command.provider,

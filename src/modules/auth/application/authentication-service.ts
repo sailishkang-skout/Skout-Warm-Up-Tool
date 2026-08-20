@@ -11,6 +11,7 @@ export interface AuthenticatedIdentity {
   readonly credentialId: ApiCredentialId;
   readonly actorType: "api_key";
   readonly credentialName: string;
+  readonly privilege: import("../domain/api-credential-privilege.js").ApiCredentialPrivilege;
 }
 
 export interface AuthenticationContext {
@@ -123,6 +124,7 @@ export function createAuthenticationService(deps: CreateAuthenticationServiceDep
         credentialId: credential.id,
         actorType: "api_key",
         credentialName: credential.name,
+        privilege: credential.privilege,
       };
     },
   };

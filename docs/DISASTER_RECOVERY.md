@@ -67,3 +67,23 @@ hold checkpoints.
 
 Anything only in Redis (short-lived OAuth state) is lost on Redis failure.
 Mailbox OAuth tokens live encrypted in Postgres.
+
+## Credential recovery
+
+Restore `provider_credentials` from Postgres backup. Re-encrypt is not
+required if `ENCRYPTION_KEY` (and prior key versions) are restored with the
+database. If the encryption key is lost, tokens cannot be recovered — tenants
+must reconnect OAuth. Do not copy ciphertext into tickets or logs.
+
+## Provider reconnection
+
+Mode B: repeat OAuth connect. Mode A: re-run provision only after directory
+APIs are CONFIGURED; idempotency keys prevent duplicate Google/Microsoft
+users when the provider already has the mailbox.
+
+## Network / kill-switch recovery
+
+`operational_kill_switches` and `operational_quarantines` restore with
+Postgres. After restore, review GLOBAL kill switch and `WARMUP_KILL_SWITCH_GLOBAL`
+before starting workers. Do not enable `WARMUP_NETWORK_ROUTING_MODE` as part
+of a restore.

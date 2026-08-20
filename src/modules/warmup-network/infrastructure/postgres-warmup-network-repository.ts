@@ -404,6 +404,7 @@ export class PostgresWarmupNetworkRepository implements WarmupNetworkRepository 
     const rows = await this.db.query<MailboxRow>(
       `UPDATE warmup_network_mailboxes
           SET membership_status = $3,
+              consent_granted_at = CASE WHEN $3 = 'ACTIVE' THEN COALESCE(consent_granted_at, now()) ELSE consent_granted_at END,
               consent_revoked_at = CASE WHEN $3 IN ('REMOVED', 'SUSPENDED', 'PAUSED') THEN now() ELSE consent_revoked_at END
         WHERE id = $1 AND owner_tenant_id = $2
         RETURNING ${MAILBOX_COLUMNS}`,

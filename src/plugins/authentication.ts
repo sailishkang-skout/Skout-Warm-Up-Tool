@@ -47,7 +47,7 @@ export function authenticationPlugin(authService: AuthenticationService): Fastif
         request.ctx = {
           ...request.ctx,
           tenantId: identity.tenantId,
-          actor: { type: "api_key", credentialId: identity.credentialId },
+          actor: { type: "api_key", credentialId: identity.credentialId, privilege: identity.privilege },
         };
       });
     },

@@ -19,25 +19,30 @@ import { createLogger } from "../shared/logger/index.js";
 interface ParsedArgs {
   readonly tenantName: string;
   readonly credentialName: string;
+  readonly operator: boolean;
 }
 
 function parseArgs(argv: readonly string[]): ParsedArgs {
   const [tenantName, ...rest] = argv;
   if (!tenantName || tenantName.startsWith("--")) {
-    console.error("Usage: bootstrap-tenant <tenant-name> [--credential-name <name>]");
+    console.error("Usage: bootstrap-tenant <tenant-name> [--credential-name <name>] [--operator]");
     process.exit(1);
   }
 
   let credentialName = "Bootstrap credential";
+  let operator = false;
   for (let index = 0; index < rest.length; index += 1) {
     const next = rest[index + 1];
     if (rest[index] === "--credential-name" && next) {
       credentialName = next;
       index += 1;
     }
+    if (rest[index] === "--operator") {
+      operator = true;
+    }
   }
 
-  return { tenantName, credentialName };
+  return { tenantName, credentialName, operator };
 }
 
 function loadConfigOrExit(): AppConfig {
@@ -49,7 +54,7 @@ function loadConfigOrExit(): AppConfig {
   }
 }
 
-const { tenantName, credentialName } = parseArgs(process.argv.slice(2));
+const { tenantName, credentialName, operator } = parseArgs(process.argv.slice(2));
 const config = loadConfigOrExit();
 const logger = createLogger({ level: config.log.level, serviceName: config.service.name, env: config.env });
 const pool = createPool(config.database, logger);
@@ -69,7 +74,10 @@ try {
   // No `actorId` in context: this credential was issued by the bootstrap
   // CLI, not by another API credential — recorded in the audit trail as a
   // "system" actor.
-  const issued = await credentialService.issueCredential(tenant.id, { name: credentialName });
+  const issued = await credentialService.issueCredential(tenant.id, {
+    name: credentialName,
+    ...(operator ? { privilege: "OPERATOR" as const } : {}),
+  });
 
   console.log("Tenant created:");
   console.log(`  id:     ${tenant.id}`);

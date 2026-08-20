@@ -11,7 +11,10 @@ export interface WarmupNetworkService {
   getMailbox(id: WarmupNetworkMailboxId): Promise<WarmupNetworkMailbox>;
   getHealth(): Promise<WarmupNetworkHealthSnapshot>;
   pauseMembership(tenantId: TenantId, id: WarmupNetworkMailboxId): Promise<WarmupNetworkMailbox>;
+  resumeMembership(tenantId: TenantId, id: WarmupNetworkMailboxId): Promise<WarmupNetworkMailbox>;
   quarantineMembership(tenantId: TenantId, id: WarmupNetworkMailboxId): Promise<WarmupNetworkMailbox>;
+  grantConsent(tenantId: TenantId, id: WarmupNetworkMailboxId): Promise<WarmupNetworkMailbox>;
+  revokeConsent(tenantId: TenantId, id: WarmupNetworkMailboxId): Promise<WarmupNetworkMailbox>;
 }
 
 export function createWarmupNetworkService(repository: WarmupNetworkRepository): WarmupNetworkService {
@@ -42,6 +45,27 @@ export function createWarmupNetworkService(repository: WarmupNetworkRepository):
     },
     async quarantineMembership(tenantId, id) {
       const mailbox = await repository.updateMembershipStatus(id, tenantId, "QUARANTINED");
+      if (!mailbox) {
+        throw new NotFoundError("Warmup network mailbox not found");
+      }
+      return mailbox;
+    },
+    async resumeMembership(tenantId, id) {
+      const mailbox = await repository.updateMembershipStatus(id, tenantId, "ACTIVE");
+      if (!mailbox) {
+        throw new NotFoundError("Warmup network mailbox not found");
+      }
+      return mailbox;
+    },
+    async grantConsent(tenantId, id) {
+      const mailbox = await repository.updateMembershipStatus(id, tenantId, "ACTIVE");
+      if (!mailbox) {
+        throw new NotFoundError("Warmup network mailbox not found");
+      }
+      return mailbox;
+    },
+    async revokeConsent(tenantId, id) {
+      const mailbox = await repository.updateMembershipStatus(id, tenantId, "REMOVED");
       if (!mailbox) {
         throw new NotFoundError("Warmup network mailbox not found");
       }

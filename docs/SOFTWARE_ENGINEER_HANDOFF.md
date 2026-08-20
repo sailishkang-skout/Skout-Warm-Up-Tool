@@ -16,7 +16,7 @@ Also read:
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — internals
 - [`WARMUP_NETWORK.md`](./WARMUP_NETWORK.md) — global partner **recipients** (opt-in; default off)
 - [`WARMUP_POOL_ROTATION.md`](./WARMUP_POOL_ROTATION.md) — tenant **sending-identity** pools
-- [`MAILBOX_INFRASTRUCTURE.md`](./MAILBOX_INFRASTRUCTURE.md) — domains, managed providers, kill switch
+- [`MAILBOX_INFRASTRUCTURE.md`](./MAILBOX_INFRASTRUCTURE.md) — domains, managed providers, kill switch, quarantine, operational mailbox states (migration 032)
 - [`PROVIDER_ARCHITECTURE.md`](./PROVIDER_ARCHITECTURE.md) — Adapter vs directory provider
 
 **The integration contract exposes policy/integration signals, not the

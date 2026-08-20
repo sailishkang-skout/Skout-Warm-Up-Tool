@@ -9,6 +9,7 @@ import type { ApiCredentialId, CorrelationId, RequestId, TenantId } from "./ids.
 export type RequestActor = {
   readonly type: "api_key";
   readonly credentialId: ApiCredentialId;
+  readonly privilege?: "TENANT" | "OPERATOR";
 };
 
 export interface RequestContext {

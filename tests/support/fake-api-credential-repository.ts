@@ -26,6 +26,7 @@ export function createFakeApiCredentialRepository(): FakeApiCredentialRepository
       keyPrefix: input.keyPrefix,
       keyHash: input.keyHash,
       status: input.status ?? "ACTIVE",
+      privilege: input.privilege ?? "TENANT",
       createdAt: input.createdAt ?? new Date(),
       updatedAt: input.updatedAt ?? new Date(),
       ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
@@ -52,6 +53,7 @@ export function createFakeApiCredentialRepository(): FakeApiCredentialRepository
           keyPrefix: input.keyPrefix,
           keyHash: input.keyHash,
           ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+          ...(input.privilege ? { privilege: input.privilege } : {}),
         }),
       );
     },

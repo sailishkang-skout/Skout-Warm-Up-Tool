@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createApiCredentialService, type ApiCredentialService } from "../modules/auth/application/api-credential-service.js";
 import { createAuthenticationService, type AuthenticationService } from "../modules/auth/application/authentication-service.js";
 import { PostgresApiCredentialRepository } from "../modules/auth/infrastructure/postgres-api-credential-repository.js";
@@ -66,9 +67,13 @@ import { createAdapterWarmupSendProvider } from "../modules/warmup/infrastructur
 import { createWarmupNetworkRouter } from "../modules/warmup-network/application/warmup-network-router.js";
 import { createCustomerDomainService, type CustomerDomainService } from "../modules/customer-domains/application/customer-domain-service.js";
 import { createGoogleWorkspaceDirectoryProvider } from "../modules/managed-directory/infrastructure/google-workspace-directory-provider.js";
+import { parseGoogleServiceAccountJson } from "../modules/managed-directory/infrastructure/google-service-account-jwt.js";
 import { createMicrosoft365DirectoryProvider } from "../modules/managed-directory/infrastructure/microsoft365-directory-provider.js";
 import { createMailboxProvisioningService, type MailboxProvisioningService } from "../modules/managed-directory/application/mailbox-provisioning-service.js";
 import { createKillSwitchService, type KillSwitchService } from "../modules/operations/application/kill-switch-service.js";
+import { createQuarantineService, type QuarantineService } from "../modules/operations/application/quarantine-service.js";
+import { createMailboxOperationalStateService, type MailboxOperationalStateService } from "../modules/mailbox/application/mailbox-operational-state-service.js";
+import { createOrganizationProviderAccountService, type OrganizationProviderAccountService } from "../modules/providers/application/organization-provider-account-service.js";
 import { createWarmupNetworkService, type WarmupNetworkService } from "../modules/warmup-network/application/warmup-network-service.js";
 import { PostgresWarmupNetworkRepository } from "../modules/warmup-network/infrastructure/postgres-warmup-network-repository.js";
 import { createWarmupPoolService, type WarmupPoolService } from "../modules/warmup-pool/application/warmup-pool-service.js";
@@ -80,6 +85,7 @@ import { PostgresWarmupSessionRepository } from "../modules/warmup/infrastructur
 import { createEncryptionService } from "../shared/crypto/index.js";
 import type { AppConfig } from "../shared/config/index.js";
 import type { Database } from "../shared/db/index.js";
+import { ConfigurationError } from "../shared/errors/index.js";
 import type { Logger } from "../shared/logger/index.js";
 import type { RedisClient } from "../shared/redis/index.js";
 
@@ -112,6 +118,10 @@ export interface AppServices {
   readonly customerDomainService: CustomerDomainService;
   readonly mailboxProvisioningService: MailboxProvisioningService;
   readonly killSwitchService: KillSwitchService;
+  readonly quarantineService: QuarantineService;
+  readonly mailboxOperationalStateService: MailboxOperationalStateService;
+  readonly organizationProviderAccountService: OrganizationProviderAccountService;
+  readonly directoryProviders: Readonly<Record<"GMAIL" | "MICROSOFT365", import("../modules/managed-directory/domain/managed-directory-provider.js").ManagedDirectoryProvider>>;
 }
 
 /**
@@ -261,15 +271,20 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
     auditRecorder,
     envGlobalPause: config.warmupNetwork.globalKillSwitch,
   });
+  const quarantineService = createQuarantineService({ database, auditRecorder });
+  const mailboxOperationalStateService = createMailboxOperationalStateService({ database, auditRecorder });
+  const organizationProviderAccountService = createOrganizationProviderAccountService({ database, auditRecorder });
   const customerDomainService = createCustomerDomainService({ database, auditRecorder });
+  const directoryProviders = {
+    GMAIL: createGoogleDirectoryProvider(config),
+    MICROSOFT365: createMicrosoftDirectoryProvider(config),
+  } as const;
   const mailboxProvisioningService = createMailboxProvisioningService({
     database,
     mailboxService,
     auditRecorder,
-    directories: {
-      GMAIL: createGoogleWorkspaceDirectoryProvider(false),
-      MICROSOFT365: createMicrosoft365DirectoryProvider(false),
-    },
+    directories: directoryProviders,
+    operationalStates: mailboxOperationalStateService,
   });
   const warmupNetworkRepository = new PostgresWarmupNetworkRepository(database);
   const warmupNetworkRouter = createWarmupNetworkRouter({
@@ -312,7 +327,28 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
       auditRecorder,
       warmupNetworkRouter,
       warmupNetworkRoutingMode: config.warmupNetwork.routingMode,
-      isExecutionPaused: () => killSwitchService.isGlobalPaused(),
+      isSendBlocked: async ({ tenantId, mailboxId, provider }) => {
+        const rows = await database.query<{
+          customer_domain_id: string | null;
+          organization_provider_account_id: string | null;
+        }>(
+          `SELECT customer_domain_id, organization_provider_account_id FROM mailboxes WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, mailboxId],
+        );
+        const extra = rows[0];
+        const context = {
+          tenantId,
+          mailboxId,
+          provider,
+          ...(extra?.customer_domain_id ? { domainId: extra.customer_domain_id } : {}),
+          ...(extra?.organization_provider_account_id
+            ? { providerAccountId: extra.organization_provider_account_id }
+            : {}),
+        };
+        return (
+          (await killSwitchService.isSendBlocked(context)) || (await quarantineService.isSendBlocked(context))
+        );
+      },
     }),
     auditRecorder,
     logger,
@@ -453,5 +489,41 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
     customerDomainService,
     mailboxProvisioningService,
     killSwitchService,
+    quarantineService,
+    mailboxOperationalStateService,
+    organizationProviderAccountService,
+    directoryProviders,
   };
+}
+
+function createGoogleDirectoryProvider(config: AppConfig) {
+  const spec = config.providers.googleWorkspace;
+  if (!spec) {
+    return createGoogleWorkspaceDirectoryProvider(false);
+  }
+  let raw: string;
+  try {
+    raw = readFileSync(spec.serviceAccountFile, "utf8");
+  } catch {
+    throw new ConfigurationError("GOOGLE_WORKSPACE_SERVICE_ACCOUNT_FILE could not be read");
+  }
+  const account = parseGoogleServiceAccountJson(raw);
+  if (!account) {
+    throw new ConfigurationError("GOOGLE_WORKSPACE_SERVICE_ACCOUNT_FILE is not a valid Google service account document");
+  }
+  return createGoogleWorkspaceDirectoryProvider({
+    config: { adminEmail: spec.adminEmail, serviceAccount: account },
+    allowLiveCalls: config.env !== "test" || config.providers.allowLiveProviderTests,
+  });
+}
+
+function createMicrosoftDirectoryProvider(config: AppConfig) {
+  const spec = config.providers.microsoftDirectory;
+  if (!spec) {
+    return createMicrosoft365DirectoryProvider(false);
+  }
+  return createMicrosoft365DirectoryProvider({
+    config: spec,
+    allowLiveCalls: config.env !== "test" || config.providers.allowLiveProviderTests,
+  });
 }
