@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import Fastify from "fastify";
 import { credentialsRoutes } from "./modules/auth/api/credentials-routes.js";
+import { platformProvisionRoutes } from "./modules/auth/api/platform-provision-routes.js";
 import { deliveryEventRoutes } from "./modules/delivery-events/api/delivery-event-routes.js";
 import { mailboxAssessmentRoutes } from "./modules/health/api/mailbox-assessment-routes.js";
 import { mailboxRoutes } from "./modules/mailbox/api/mailbox-routes.js";
@@ -72,6 +73,14 @@ export async function buildApp(config: AppConfig, logger: Logger, database: Data
   // delivery-events/README.md for the documented limitation and future
   // path). Never registered without fastify.authenticate.
   await app.register(deliveryEventRoutes(services.deliveryEventService), { prefix: "/api/v1/internal" });
+  await app.register(
+    platformProvisionRoutes({
+      tenantRepository: services.tenantRepository,
+      credentialService: services.credentialService,
+      platformProvisioningKey: config.security.platformProvisioningKey,
+    }),
+    { prefix: "/api/v1/internal" },
+  );
   await app.register(conversationRoutes(services.conversationService, services.classificationQuery, services.policyQuery), {
     prefix: "/api/v1/conversations",
   });

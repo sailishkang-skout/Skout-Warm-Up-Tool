@@ -19,7 +19,12 @@ export interface AppConfig {
     readonly statementTimeoutMs: number;
   };
   readonly redis: { readonly url: string };
-  readonly security: { readonly encryptionKey: string; readonly apiKeyPepper: string };
+  readonly security: {
+    readonly encryptionKey: string;
+    readonly apiKeyPepper: string;
+    /** When set, enables POST /api/v1/internal/provision-tenant for Skout platform. */
+    readonly platformProvisioningKey?: string;
+  };
   readonly providers: {
     readonly google?: { readonly clientId: string; readonly clientSecret: string; readonly redirectUri: string };
     readonly microsoft?: { readonly clientId: string; readonly clientSecret: string; readonly redirectUri: string };
@@ -120,7 +125,7 @@ function toAppConfig(env: EnvShape): AppConfig {
     isTest: env.NODE_ENV === "test",
     service: { name: env.SERVICE_NAME, version: env.SERVICE_VERSION },
     http: {
-      port: env.PORT,
+      port: env.HTTP_PORT ?? env.PORT,
       host: env.HTTP_HOST,
       bodyLimitBytes: env.HTTP_BODY_LIMIT_BYTES,
       shutdownTimeoutMs: env.HTTP_SHUTDOWN_TIMEOUT_MS,
@@ -138,6 +143,9 @@ function toAppConfig(env: EnvShape): AppConfig {
     security: {
       encryptionKey: env.ENCRYPTION_KEY,
       apiKeyPepper: env.API_KEY_PEPPER,
+      ...(env.PLATFORM_PROVISIONING_KEY
+        ? { platformProvisioningKey: env.PLATFORM_PROVISIONING_KEY }
+        : {}),
     },
     providers: {
       // The schema's `.check()` already guarantees each triplet is

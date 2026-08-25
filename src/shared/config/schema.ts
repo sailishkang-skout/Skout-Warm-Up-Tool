@@ -22,6 +22,8 @@ export const envSchema = z
     SERVICE_NAME: z.string().min(1).default("skout-email-warmup-service"),
     SERVICE_VERSION: z.string().min(1).default("0.1.0"),
     PORT: z.coerce.number().int().min(1).max(65535).default(3010),
+    // Prefer HTTP_PORT when set — avoids collisions if shell scripts clobber PORT.
+    HTTP_PORT: z.coerce.number().int().min(1).max(65535).optional(),
     HTTP_HOST: z.string().min(1).default("0.0.0.0"),
     HTTP_BODY_LIMIT_BYTES: z.coerce.number().int().min(1024).default(1_048_576),
     HTTP_SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(1000).default(15_000),
@@ -49,6 +51,9 @@ export const envSchema = z
     // HMAC pepper for API credential hashing — see src/modules/auth/domain/api-key-hash.ts
     // for why HMAC-SHA256 rather than a password KDF, and why a pepper at all.
     API_KEY_PEPPER: z.string().min(32, "API_KEY_PEPPER must be at least 32 characters"),
+    // Service-to-service key for Skout platform tenant provisioning. Optional —
+    // when unset, POST /api/v1/internal/provision-tenant returns 503.
+    PLATFORM_PROVISIONING_KEY: z.string().min(32).optional(),
     AI_CLASSIFICATION_PROVIDER: z.enum(["none", "openai", "openrouter"]).default("none"),
     AI_API_KEY: z.string().min(1).optional(),
     AI_BASE_URL: z.string().url().optional(),

@@ -57,6 +57,7 @@ import { SmtpImapAdapter } from "../modules/providers/infrastructure/smtp-imap/s
 import { createReputationService, type ReputationService } from "../modules/reputation/application/reputation-service.js";
 import { PostgresReputationRepository } from "../modules/reputation/infrastructure/postgres-reputation-repository.js";
 import { PostgresTenantRepository } from "../modules/tenancy/infrastructure/postgres-tenant-repository.js";
+import type { TenantRepository } from "../modules/tenancy/application/tenant-repository.js";
 import { createExecutionWorker, type ExecutionWorker } from "../modules/warmup/application/execution-worker.js";
 import { createWarmupProfileService, type WarmupProfileService } from "../modules/warmup/application/warmup-profile-service.js";
 import { createWarmupReconciliationService, type WarmupReconciliationService } from "../modules/warmup/application/warmup-reconciliation-service.js";
@@ -86,6 +87,7 @@ import type { RedisClient } from "../shared/redis/index.js";
 export interface AppServices {
   readonly authenticationService: AuthenticationService;
   readonly credentialService: ApiCredentialService;
+  readonly tenantRepository: TenantRepository;
   readonly mailboxService: MailboxService;
   readonly providerRegistry: ProviderRegistry;
   readonly oauthConnectionService: OAuthConnectionService;
@@ -427,6 +429,7 @@ export function buildServices(config: AppConfig, logger: Logger, database: Datab
   return {
     authenticationService,
     credentialService,
+    tenantRepository,
     mailboxService,
     providerRegistry,
     oauthConnectionService,

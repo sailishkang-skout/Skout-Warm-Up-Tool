@@ -23,3 +23,10 @@ suppression, and LinkedIn are **not** implemented here.
 
 Local infra: `npm run db:up` (Postgres **5433**, Redis **6380**), then
 `npm run migrate:up`. Run the API plus four workers; see the handoff.
+
+## Container / Skout platform
+
+- `Dockerfile` builds a multi-process image (API + workers via different CMD).
+- Skout Backend proxies at `/api/v1/warmup-tool/*` and provisions a tenant per
+  workspace via `POST /api/v1/internal/provision-tenant` (`PLATFORM_PROVISIONING_KEY`).
+- Testing guide lives in the Backend repo: `docs/WARMUP_TOOL_TESTING.md`.

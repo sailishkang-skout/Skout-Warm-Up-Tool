@@ -105,11 +105,11 @@ export class PermanentError extends AppError {
   readonly isOperational = true;
 }
 
-/** Invalid/missing configuration. Not operational — it means the deployment is broken. */
+/** OAuth / provider wiring missing on this deployment — return 503 so proxies don't treat it as an unexpected 500. */
 export class ConfigurationError extends AppError {
   readonly code = "CONFIGURATION_ERROR" as const;
-  readonly httpStatus = 500;
-  readonly isOperational = false;
+  readonly httpStatus = 503;
+  readonly isOperational = true;
 }
 
 export class DatabaseError extends AppError {
