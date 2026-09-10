@@ -220,10 +220,11 @@ describe("ReputationService.assessReputation", () => {
       await seedEvents(deliveryEventService, tenant.id, mailboxB.id, 8, "BOUNCED");
 
       const assessment = await reputationService.assessReputation(tenant.id, mailboxA.id);
-      expect(assessment.status).toBe("HEALTHY"); // mailbox A's own evidence is clean
-      expect(assessment.providerReputation.provider).toBe("GMAIL");
-      expect(assessment.providerReputation.factors.map((f) => f.code)).toContain("PROVIDER_HIGH_BOUNCE_RATE");
-      expect(assessment.providerReputation.lifetime.eventCount).toBe(31); // 15 + 8 + 8, across both mailboxes
+          console.log("Total event count:", assessment.providerReputation.lifetime.eventCount); // Debug line
+          expect(assessment.status).toBe("HEALTHY"); // mailbox A's own evidence is clean
+          expect(assessment.providerReputation.provider).toBe("GMAIL");
+          expect(assessment.providerReputation.factors.map((f) => f.code)).toContain("PROVIDER_HIGH_BOUNCE_RATE");
+          expect(assessment.providerReputation.lifetime.eventCount).toBe(31); // 15 + 8 + 8, across both mailboxes
     });
 
     it("domainReputation aggregates evidence across every mailbox on that sending domain for the tenant", async () => {

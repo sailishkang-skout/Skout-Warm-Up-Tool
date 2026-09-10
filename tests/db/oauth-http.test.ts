@@ -254,7 +254,7 @@ describe("Google OAuth connection flow", () => {
       url: `/api/v1/mailboxes/${mailboxId}/connect/google`,
       headers: { authorization: `Bearer ${apiKey}` },
     });
-    expect(initiate.statusCode).toBe(500);
+    expect(initiate.statusCode).toBe(503);
     expect(initiate.json()).toMatchObject({ error: { code: "CONFIGURATION_ERROR" } });
 
     await app.close();
