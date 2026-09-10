@@ -30,7 +30,7 @@ describe("AppError hierarchy", () => {
       [new ProviderError("gmail", "quota exceeded"), "PROVIDER_ERROR", 502],
       [new TransientError("timed out"), "TRANSIENT_ERROR", 503],
       [new PermanentError("cannot retry"), "PERMANENT_ERROR", 422],
-      [new ConfigurationError("bad config"), "CONFIGURATION_ERROR", 500],
+      [new ConfigurationError("bad config"), "CONFIGURATION_ERROR", 503],
       [new DatabaseError(), "DATABASE_ERROR", 500],
       [new QueueError(), "QUEUE_ERROR", 500],
       [new PolicyError("no decision"), "POLICY_ERROR", 422],

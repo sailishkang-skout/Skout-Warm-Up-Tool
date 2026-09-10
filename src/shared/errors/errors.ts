@@ -109,7 +109,7 @@ export class PermanentError extends AppError {
 export class ConfigurationError extends AppError {
   readonly code = "CONFIGURATION_ERROR" as const;
   readonly httpStatus = 503;
-  readonly isOperational = true;
+  readonly isOperational = false;
 }
 
 export class DatabaseError extends AppError {
