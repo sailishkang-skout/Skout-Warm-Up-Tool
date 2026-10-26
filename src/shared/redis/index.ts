@@ -1,2 +1,2 @@
-export { checkRedisConnectivity, createRedisClient } from "./redis-client.js";
+export { checkRedisConnectivity, createRedisClient, waitForRedisConnectivity } from "./redis-client.js";
 export type { RedisClient } from "./redis-client.js";

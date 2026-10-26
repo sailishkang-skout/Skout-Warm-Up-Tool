@@ -4,7 +4,7 @@ import { loadConfig, type AppConfig } from "./shared/config/index.js";
 import { createDatabase, createPool, type Database } from "./shared/db/index.js";
 import { DatabaseError, TransientError } from "./shared/errors/index.js";
 import { createLogger, type Logger } from "./shared/logger/index.js";
-import { checkRedisConnectivity, createRedisClient, type RedisClient } from "./shared/redis/index.js";
+import { createRedisClient, waitForRedisConnectivity, type RedisClient } from "./shared/redis/index.js";
 
 function loadConfigOrExit(): AppConfig {
   try {
@@ -44,7 +44,7 @@ async function connectDatabaseOrExit(config: AppConfig, logger: Logger): Promise
 async function connectRedisOrExit(config: AppConfig, logger: Logger): Promise<RedisClient> {
   const redis = createRedisClient(config.redis.url, logger);
 
-  const isConnected = await checkRedisConnectivity(redis);
+  const isConnected = await waitForRedisConnectivity(redis);
   if (!isConnected) {
     logger.error(
       { err: new TransientError("Failed to establish initial Redis connectivity") },

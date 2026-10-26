@@ -7,7 +7,7 @@ import { createDatabase, createPool, type Database } from "../shared/db/index.js
 import { DatabaseError, TransientError } from "../shared/errors/index.js";
 import { createLogger, type Logger } from "../shared/logger/index.js";
 import { incrementCounter, METRIC } from "../shared/observability/index.js";
-import { checkRedisConnectivity, createRedisClient, type RedisClient } from "../shared/redis/index.js";
+import { createRedisClient, waitForRedisConnectivity, type RedisClient } from "../shared/redis/index.js";
 
 /**
  * The long-running worker process Stage 12 spec's "WORKER CADENCE" asks
@@ -47,7 +47,7 @@ async function connectDatabaseOrExit(config: AppConfig, logger: Logger): Promise
 
 async function connectRedisOrExit(config: AppConfig, logger: Logger): Promise<RedisClient> {
   const redis = createRedisClient(config.redis.url, logger);
-  const isConnected = await checkRedisConnectivity(redis);
+  const isConnected = await waitForRedisConnectivity(redis);
   if (!isConnected) {
     logger.error({ err: new TransientError("Failed to establish initial Redis connectivity") }, "Redis initialization failed - refusing to start");
     redis.disconnect();
