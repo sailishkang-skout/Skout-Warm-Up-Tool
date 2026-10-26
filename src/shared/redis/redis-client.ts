@@ -65,3 +65,26 @@ export async function checkRedisConnectivity(redis: RedisClient): Promise<boolea
     return false;
   }
 }
+
+/**
+ * Startup-only variant of `checkRedisConnectivity`: keeps probing until Redis
+ * answers or `timeoutMs` elapses. Redis is routinely replaced in the same
+ * deploy that starts this process, so a single failed probe at boot is
+ * expected, not fatal.
+ */
+export async function waitForRedisConnectivity(
+  redis: RedisClient,
+  options: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<boolean> {
+  const { timeoutMs = 90_000, intervalMs = 2_000 } = options;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await checkRedisConnectivity(redis)) {
+      return true;
+    }
+    if (Date.now() + intervalMs > deadline) {
+      return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
